@@ -44,13 +44,42 @@
     return true;
   };
 
-  // ป้ายบอกว่าเป็นโหมดเนทีฟ
+  // บันทึกไฟล์ผลลัพธ์แบบเนทีฟ (เรียกจาก finalize ใน editor.js)
+  window._nativeFinalize = async function(finalBuf, fname){
+    if(!window.ffNative || !window.ffNative.saveOutput) return null;
+    var u8 = new Uint8Array(finalBuf);
+    var tmpName = '__out_' + Date.now() + '_' + String(fname).replace(/[^\w.\-]/g,'_');
+    window.ffNative.writeFile(tmpName, u8);
+    var dest = window.ffNative.saveOutput(tmpName, fname);
+    try{ window.ffNative.unlink(tmpName); }catch(e){}
+    return dest;
+  };
+
+  // ป้ายบอกว่าเป็นโหมดเนทีฟ + ซ่อนคำเตือน localhost (โหมดเนทีฟไม่ต้องใช้) + ปุ่ม Native Export
   function brand(){
     try{
-      var b = document.getElementById('exp-go');
-      if(b) b.textContent = '⚡ Native Export — รวมและส่งออก';
+      // ซ่อนคำเตือน file:// → ส่งออกไม่ได้ (ไม่เกี่ยวกับโหมดเนทีฟ)
+      var lw = document.getElementById('localhost-warn');
+      if(lw){ lw.style.display = 'none'; }
+
       var t = document.querySelector('.logo-txt');
       if(t && t.textContent.indexOf('⚡') < 0) t.textContent = t.textContent + ' ⚡';
+
+      // เพิ่มปุ่มเขียว "⚡ Native Export" ในกล่องส่งออก (ถ้ายังไม่มี)
+      var go = document.getElementById('exp-go');
+      if(go && !document.getElementById('exp-native')){
+        var nb = document.createElement('button');
+        nb.id = 'exp-native';
+        nb.className = 'em-btn';
+        nb.textContent = '⚡ Native Export';
+        nb.style.cssText = 'background:#22c55e;color:#04210f;border:none;font-weight:800;padding:8px 18px;border-radius:7px;cursor:pointer;font-size:13px;';
+        nb.title = 'รวมและส่งออกด้วย FFmpeg เนทีฟ แล้วบันทึกลงโฟลเดอร์ Videos อัตโนมัติ';
+        nb.addEventListener('click', function(){
+          if(go.disabled) return;
+          go.click();   // ใช้ขั้นตอนส่งออกเดิมทั้งหมด → finalize จะบันทึกแบบเนทีฟให้เอง
+        });
+        go.parentNode.appendChild(nb);
+      }
     }catch(e){}
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', brand);

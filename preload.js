@@ -47,5 +47,21 @@ contextBridge.exposeInMainWorld('ffNative', {
         else reject(new Error('ffmpeg exited with code ' + code + '\n' + err.slice(-700)));
       });
     });
+  },
+
+  // บันทึกไฟล์ผลลัพธ์ลงโฟลเดอร์ Videos ของผู้ใช้ แล้วคืน path เต็ม
+  saveOutput: function(srcName, outFileName){
+    var dir = path.join(os.homedir(), 'Videos');
+    try{ if(!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); }
+    catch(e){ dir = os.homedir(); }
+    var safe = String(outFileName || 'suomsiang_output.mp4').replace(/[\\/:*?"<>|]/g, '_');
+    var dest = path.join(dir, safe);
+    // กันชื่อซ้ำ: ถ้ามีอยู่แล้ว เติม (1), (2), ...
+    if(fs.existsSync(dest)){
+      var ext = path.extname(safe), base = path.basename(safe, ext), i = 1;
+      do { dest = path.join(dir, base + ' (' + i + ')' + ext); i++; } while(fs.existsSync(dest));
+    }
+    fs.copyFileSync(path.join(tmpDir, srcName), dest);
+    return dest;
   }
 });

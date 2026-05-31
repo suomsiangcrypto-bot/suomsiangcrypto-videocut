@@ -3407,6 +3407,21 @@ document.getElementById('exp-go').addEventListener('click', async function(){
     var blob=new Blob([finalBuf],{type:mimeMap[outExt]||'video/mp4'});
     var fname=(document.getElementById('exp-name').value||'suomsiang')+'.'+outExt;
 
+    // โหมดเนทีฟ (Electron): บันทึกลงโฟลเดอร์จริง + โชว์ path (ไม่ต้องดาวน์โหลดผ่านเบราว์เซอร์)
+    if(window.IS_NATIVE && typeof window._nativeFinalize==='function'){
+      try{
+        var _np = await window._nativeFinalize(finalBuf, fname);
+        if(_np){
+          if(dl) dl.style.display='none';
+          epf.style.width='100%';
+          eps.innerHTML='✅ บันทึกแล้ว: <span style="color:#22c55e;word-break:break-all;">'+_np+'</span>';
+          showToast('✅ บันทึกไฟล์แล้ว');
+          btn.disabled=false; btn.textContent='⚡ Native Export';
+          return;
+        }
+      }catch(_ne){ console.warn('[native save] fail → fallback download', _ne&&_ne.message); }
+    }
+
     // วิธีดาวน์โหลดที่ทำงานได้ใน Chrome Extension (MV3)
     function triggerDownload(){
       // ลอง chrome.downloads API ก่อน (ต้องการ permission "downloads")
