@@ -3113,6 +3113,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
         // ── IMAGE CLIP: สร้าง video จากภาพนิ่ง ──
         args.push('-loop','1');
         args.push('-i', inN);
+        if(!isAudioOnly) args.push('-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=44100');
         args.push('-t', clipDurSec.toFixed(3));
         if(!isAudioOnly){
           // scale แล้ว pad ให้เต็มเฟรม (letterbox style ไม่ crop)
@@ -3132,7 +3133,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           }
           args.push('-vf', imgVf);
           args.push('-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p');
-          args.push('-an'); // ภาพนิ่งไม่มีเสียงต้นฉบับ
+          args.push('-map','0:v','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest'); // ภาพนิ่ง: เสียงเงียบ (ให้ทุก segment มีสตรีมเสียงเท่ากัน → concat ไม่หลุดเสียง)
         }
         args.push(segN);
         await ffWrite(inN, entry.file);
@@ -3140,6 +3141,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
         // ── VIDEO CLIP ──
         if(tIn > 0.05) args.push('-ss', tIn.toFixed(3));
         args.push('-i', inN);
+        if(!isAudioOnly && c.muted) args.push('-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=44100');
         args.push('-t', clipDurSec.toFixed(3));
 
         if(!isAudioOnly){
@@ -3174,7 +3176,13 @@ document.getElementById('exp-go').addEventListener('click', async function(){
 
           args.push('-vf', vf);
           args.push('-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p');
-          if(c.muted){ args.push('-an'); } else { args.push('-c:a','aac','-b:a','128k'); }
+          if(c.muted){
+            // ปิดเสียง: ใส่เสียงเงียบแทน (ปุ่มปิดลำโพงต่อคลิป) — ยังคงมีสตรีมเสียง
+            args.push('-map','0:v','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest');
+          } else {
+            // คงเสียงต้นฉบับของวิดีโอไว้ (normalize เป็น aac/44100/stereo ให้ concat ตรงกัน)
+            args.push('-map','0:v','-map','0:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k');
+          }
         } else {
           if(fmtV==='mp3') args.push('-vn','-acodec','libmp3lame','-q:a','2');
           else args.push('-vn','-acodec','aac','-b:a','192k');
@@ -3191,7 +3199,21 @@ document.getElementById('exp-go').addEventListener('click', async function(){
         eps.textContent = '⚙️ encode ('+(i+1)+'/'+playQueue.length+') '+pct+'%: '+entry.name;
       });
 
-      await ffExec(args);
+      try{
+        await ffExec(args);
+      }catch(encErr){
+        // เผื่อกรณีวิดีโอไม่มีเสียงต้นฉบับ → -map 0:a ล้มเหลว → ลองใหม่แบบใส่เสียงเงียบ
+        if(!isImageClip && !c.muted && !isAudioOnly && typeof vf!=='undefined' && vf){
+          console.warn('[encode] retry with silent audio:', encErr&&encErr.message);
+          var sArgs=[];
+          if(tIn>0.05) sArgs.push('-ss', tIn.toFixed(3));
+          sArgs.push('-i', inN, '-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=44100',
+            '-t', clipDurSec.toFixed(3), '-vf', vf,
+            '-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p',
+            '-map','0:v','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest', segN);
+          await ffExec(sArgs);
+        } else { throw encErr; }
+      }
       _ffmpegLib.setProgress(function(){});
 
       var segData;
@@ -3252,14 +3274,15 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           // calc audio offset (startSec ของ audio clip)
           var ps0 = pxSec();
           var aStart = (aClip.startSec!==undefined) ? aClip.startSec : (aClip.left/ps0);
-          // mix: -itsoffset ทำให้เสียงเริ่มตรงตำแหน่ง
+          var aMs = Math.max(0, Math.round(aStart*1000));
+          // amix: เสียงต้นฉบับวิดีโอ (0:a) + เพลง (1:a เลื่อนเริ่มตาม startSec) อยู่ด้วยกัน
           var mixArgs = [
             '-i','vid_premix.mp4',
-            '-itsoffset', aStart.toFixed(3),
             '-i', aFileName,
-            '-c:v','copy',
-            '-c:a','aac','-b:a','128k',
-            '-shortest',
+            '-filter_complex',
+            '[1:a]adelay='+aMs+'|'+aMs+',volume=0.85[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0[mx];[mx]volume=2.0[aout]',
+            '-map','0:v','-map','[aout]',
+            '-c:v','copy','-c:a','aac','-b:a','192k',
             mixFinal
           ];
           await ffExec(mixArgs);
@@ -4682,7 +4705,7 @@ async function burnWaveCanvasSeq(finalBuf, tw, th, projFps, crf, eps, epf){
   var mono=dec.mono, sr=dec.sr, audioDur=dec.dur;
 
   // fps ของซีเควนซ์ (จำกัดจำนวนเฟรมไม่ให้เปลือง RAM)
-  var seqFps = Math.min(30, Math.max(12, projFps||30));
+  var seqFps = Math.min(15, Math.max(10, projFps||30));  // ลดเฟรมให้ส่งออกเร็วขึ้น
   var FFT=256, half=128;
   var hann=new Float32Array(FFT);
   for(var hi=0;hi<FFT;hi++) hann[hi]=0.5-0.5*Math.cos(2*Math.PI*hi/(FFT-1));
@@ -4708,7 +4731,7 @@ async function burnWaveCanvasSeq(finalBuf, tw, th, projFps, crf, eps, epf){
     var baseData=genWaveData(nBars, clip.seed||1);
 
     var winFrames=Math.ceil(durSec*seqFps);
-    if(winFrames>1800){ seqFps=Math.max(12,Math.floor(1800/durSec)); winFrames=Math.ceil(durSec*seqFps); }
+    if(winFrames>900){ seqFps=Math.max(8,Math.floor(900/durSec)); winFrames=Math.ceil(durSec*seqFps); }
 
     // canvas สำหรับเฟรม
     var cv=document.createElement('canvas'); cv.width=w; cv.height=h;
@@ -4961,7 +4984,7 @@ async function burnAllOverlays(finalBuf, tw, th, projFps, crf, eps, epf){
   jobs.sort(function(a,b){ return (a.z||0)-(b.z||0); });   // น้อย→มาก (มากอยู่บนสุด)
 
   // ── ถ้ามี waveform: decode เสียงครั้งเดียว ──
-  var dec=null, aStart=0, seqFps=Math.min(30, Math.max(12, projFps||30));
+  var dec=null, aStart=0, seqFps=Math.min(15, Math.max(10, projFps||30));  // ลดเฟรมให้เร็วขึ้น
   var hasWave = jobs.some(function(j){ return j.kind==='wave'; });
   if(hasWave){
     var aClips = Object.values(S.clips).filter(function(c){ return c.type==='audio'; });
@@ -5039,7 +5062,7 @@ async function burnAllOverlays(finalBuf, tw, th, projFps, crf, eps, epf){
       var nBars=Math.max(20,Math.floor(ww/5));
       var baseData=genWaveData(nBars, clip.seed||1);
       var lfps=seqFps, winFrames=Math.ceil(durSec*lfps);
-      if(winFrames>1800){ lfps=Math.max(12,Math.floor(1800/durSec)); winFrames=Math.ceil(durSec*lfps); }
+      if(winFrames>900){ lfps=Math.max(8,Math.floor(900/durSec)); winFrames=Math.ceil(durSec*lfps); }
       var wcv=document.createElement('canvas'); wcv.width=ww; wcv.height=wh;
       var smooth=new Float32Array(half), re=new Float32Array(FFT), im=new Float32Array(FFT), freq255=new Float32Array(half);
       if(eps) eps.textContent='🎨 วาด waveform '+winFrames+' เฟรม...';
