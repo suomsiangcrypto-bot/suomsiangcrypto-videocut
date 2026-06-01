@@ -3199,33 +3199,42 @@ document.getElementById('exp-go').addEventListener('click', async function(){
         eps.textContent = '⚙️ encode ('+(i+1)+'/'+playQueue.length+') '+pct+'%: '+entry.name;
       });
 
-      // encode แบบทนทาน: ลองปกติก่อน ถ้าพัง/ได้ไฟล์ว่าง (เช่นวิดีโอ AI ที่ไม่มีเสียง)
-      // → ลองใหม่แบบใส่เสียงเงียบอัตโนมัติ เพื่อให้ทุกคลิปผ่านและมีสตรีมเสียงเท่ากัน
-      var segData=null;
-      for(var _att=0; _att<2; _att++){
+      // encode แบบทนทาน: (0) ปกติ (1) ใส่เสียงเงียบ (2) สเกลแบบง่ายสุด — เพื่อให้ผ่านให้ได้
+      var segData=null, _lastErr='';
+      for(var _att=0; _att<3; _att++){
         var _runArgs = args;
         if(_att===1 && !isImageClip && !isAudioOnly){
+          // รอบ 2: ใส่เสียงเงียบ (กันวิดีโอไม่มีเสียง)
           _runArgs=[];
           if(tIn>0.05) _runArgs.push('-ss', tIn.toFixed(3));
           _runArgs.push('-i', inN, '-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=44100','-t', clipDurSec.toFixed(3));
           if(typeof vf!=='undefined' && vf) _runArgs.push('-vf', vf);
           _runArgs.push('-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p',
             '-map','0:v','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest', segN);
-        }
+        } else if(_att===2 && !isAudioOnly){
+          // รอบ 3 (สุดท้าย): สเกลง่ายสุด ไม่ crop/pad ซับซ้อน + เสียงเงียบ — เผื่อ filter เดิมมีปัญหา
+          _runArgs=[];
+          if(!isImageClip && tIn>0.05) _runArgs.push('-ss', tIn.toFixed(3));
+          if(isImageClip) _runArgs.push('-loop','1');
+          _runArgs.push('-i', inN, '-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=44100','-t', clipDurSec.toFixed(3));
+          _runArgs.push('-vf','scale='+tw+':'+th+':force_original_aspect_ratio=decrease,pad='+tw+':'+th+':-1:-1:black,setsar=1',
+            '-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p',
+            '-map','0:v','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest', segN);
+        } else if(_att>0 && isAudioOnly){ break; }
         try{ ffDel(segN); }catch(e){}
         try{
           await ffExec(_runArgs);
           segData = _ffmpegLib.FS('readFile', segN);
         }catch(encErr){
-          console.warn('[encode] attempt '+_att+' fail ('+entry.name+'):', encErr&&encErr.message);
+          _lastErr = (encErr&&encErr.message) ? String(encErr.message) : String(encErr);
+          console.warn('[encode] attempt '+_att+' fail ('+entry.name+'):', _lastErr);
           segData=null;
         }
         if(segData && segData.length>0) break;
-        if(isImageClip) break;   // ภาพนิ่งมีเสียงเงียบในตัวอยู่แล้ว
       }
       _ffmpegLib.setProgress(function(){});
       if(!segData || segData.length===0){
-        throw new Error('encode ไม่สำเร็จ ('+entry.name+') — ไฟล์อาจเสียหายหรือฟอร์แมตไม่รองรับ');
+        throw new Error('encode ไม่สำเร็จ: '+entry.name+'\n\nffmpeg แจ้งว่า:\n'+(_lastErr||'(ไม่มีรายละเอียด)'));
       }
       allSegData.push(segData.buffer);
       // cleanup waveform overlay file

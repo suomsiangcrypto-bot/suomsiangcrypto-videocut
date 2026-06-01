@@ -10,9 +10,22 @@ const { spawn } = require('child_process');
 
 // path ของไบนารี ffmpeg (มาจาก ffmpeg-static) — แก้ path เมื่อถูกแพ็กใน asar
 let ffmpegPath = require('ffmpeg-static');
-if (ffmpegPath && ffmpegPath.includes('app.asar')) {
+if (ffmpegPath && ffmpegPath.includes('app.asar') && !ffmpegPath.includes('app.asar.unpacked')) {
   ffmpegPath = ffmpegPath.replace('app.asar', 'app.asar.unpacked');
 }
+// ตรวจว่าไฟล์มีจริง ถ้าไม่มี ลองหาทางอื่น (กันปัญหา path ตอนแพ็ก .exe)
+let ffmpegExists = false;
+try { ffmpegExists = !!ffmpegPath && fs.existsSync(ffmpegPath); } catch(e){}
+if (!ffmpegExists && ffmpegPath) {
+  const cands = [
+    ffmpegPath.replace('app.asar.unpacked', 'app.asar'),
+    ffmpegPath.replace('app.asar', 'app.asar.unpacked'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
+  ];
+  for (const c of cands) { try { if (c && fs.existsSync(c)) { ffmpegPath = c; ffmpegExists = true; break; } } catch(e){} }
+}
+try { if (ffmpegExists && process.platform !== 'win32') fs.chmodSync(ffmpegPath, 0o755); } catch(e){}
+console.log('[native-preload] ffmpegPath =', ffmpegPath, '| exists =', ffmpegExists);
 
 // โฟลเดอร์ทำงานชั่วคราว (ลบทิ้งเมื่อปิดโปรแกรม)
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'suomsiang-'));
@@ -22,6 +35,22 @@ process.on('exit', cleanup);
 contextBridge.exposeInMainWorld('ffNative', {
   tmpDir: tmpDir,
   ffmpegPath: ffmpegPath,
+  ffmpegExists: ffmpegExists,
+
+  // self-test: รัน ffmpeg -version เพื่อยืนยันว่าไบนารีทำงานได้จริง
+  probe: function(){
+    return new Promise(function(resolve){
+      if(!ffmpegPath){ resolve({ ok:false, error:'ไม่พบ ffmpegPath' }); return; }
+      try{
+        const p = spawn(ffmpegPath, ['-version'], { cwd: tmpDir });
+        let out=''; let er='';
+        p.stdout.on('data', function(d){ out+=d.toString(); });
+        p.stderr.on('data', function(d){ er+=d.toString(); });
+        p.on('error', function(e){ resolve({ ok:false, error:String(e&&e.message||e), path:ffmpegPath }); });
+        p.on('close', function(code){ resolve({ ok: code===0, code:code, version:(out.split('\n')[0]||'').trim(), path:ffmpegPath, error: code===0?'':er.slice(-300) }); });
+      }catch(e){ resolve({ ok:false, error:String(e&&e.message||e), path:ffmpegPath }); }
+    });
+  },
 
   // เขียน/อ่าน/ลบไฟล์ในโฟลเดอร์ชั่วคราว (sync — เข้ากันได้กับโค้ด export เดิม)
   writeFile: function(name, u8){

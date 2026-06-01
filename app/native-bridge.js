@@ -11,6 +11,20 @@
   }
   window.IS_NATIVE = true;
 
+  // ── self-test: ยืนยันว่า ffmpeg เนทีฟใช้งานได้จริงตอนเปิดแอป ──
+  window._ffProbe = null;
+  if(window.ffNative.probe){
+    window.ffNative.probe().then(function(r){
+      window._ffProbe = r;
+      if(r && r.ok){
+        console.log('[native] ✅ ffmpeg OK:', r.version, '| path:', r.path);
+      } else {
+        console.error('[native] ❌ ffmpeg ใช้ไม่ได้:', r && r.error, '| path:', r && r.path);
+        try{ if(typeof showToast==='function') showToast('❌ หาไฟล์ ffmpeg ไม่เจอ/รันไม่ได้ — ส่งออกจะไม่ทำงาน'); }catch(e){}
+      }
+    });
+  }
+
   // shim ที่หน้าตาเหมือน _ffmpegLib ของ ffmpeg.wasm v0.11
   var shim = {
     isNative: true,
