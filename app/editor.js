@@ -3133,7 +3133,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           }
           args.push('-vf', imgVf);
           args.push('-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p');
-          args.push('-map','0:v','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest'); // ภาพนิ่ง: เสียงเงียบ (ให้ทุก segment มีสตรีมเสียงเท่ากัน → concat ไม่หลุดเสียง)
+          args.push('-map','0:v:0','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest'); // ภาพนิ่ง: เสียงเงียบ (ให้ทุก segment มีสตรีมเสียงเท่ากัน → concat ไม่หลุดเสียง)
         }
         args.push(segN);
         await ffWrite(inN, entry.file);
@@ -3178,10 +3178,10 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           args.push('-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p');
           if(c.muted){
             // ปิดเสียง: ใส่เสียงเงียบแทน (ปุ่มปิดลำโพงต่อคลิป) — ยังคงมีสตรีมเสียง
-            args.push('-map','0:v','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest');
+            args.push('-map','0:v:0','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest');
           } else {
             // คงเสียงต้นฉบับของวิดีโอไว้ (normalize เป็น aac/44100/stereo ให้ concat ตรงกัน)
-            args.push('-map','0:v','-map','0:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k');
+            args.push('-map','0:v:0','-map','0:a:0','-c:a','aac','-ar','44100','-ac','2','-b:a','128k');
           }
         } else {
           if(fmtV==='mp3') args.push('-vn','-acodec','libmp3lame','-q:a','2');
@@ -3210,7 +3210,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           _runArgs.push('-i', inN, '-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=44100','-t', clipDurSec.toFixed(3));
           if(typeof vf!=='undefined' && vf) _runArgs.push('-vf', vf);
           _runArgs.push('-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p',
-            '-map','0:v','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest', segN);
+            '-map','0:v:0','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest', segN);
         } else if(_att===2 && !isAudioOnly){
           // รอบ 3 (สุดท้าย): สเกลง่ายสุด ไม่ crop/pad ซับซ้อน + เสียงเงียบ — เผื่อ filter เดิมมีปัญหา
           _runArgs=[];
@@ -3219,7 +3219,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           _runArgs.push('-i', inN, '-f','lavfi','-i','anullsrc=channel_layout=stereo:sample_rate=44100','-t', clipDurSec.toFixed(3));
           _runArgs.push('-vf','scale='+tw+':'+th+':force_original_aspect_ratio=decrease,pad='+tw+':'+th+':-1:-1:black,setsar=1',
             '-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p',
-            '-map','0:v','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest', segN);
+            '-map','0:v:0','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest', segN);
         } else if(_att>0 && isAudioOnly){ break; }
         try{ ffDel(segN); }catch(e){}
         try{
@@ -3302,7 +3302,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
             '-i', aFileName,
             '-filter_complex',
             '[1:a]adelay='+aMs+'|'+aMs+',volume=0.85[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0[mx];[mx]volume=2.0[aout]',
-            '-map','0:v','-map','[aout]',
+            '-map','0:v:0','-map','[aout]',
             '-c:v','copy','-c:a','aac','-b:a','192k',
             mixFinal
           ];
