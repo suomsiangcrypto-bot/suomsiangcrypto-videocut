@@ -3317,10 +3317,10 @@ document.getElementById('exp-go').addEventListener('click', async function(){
         var _stkBuf = await burnStickers(finalBuf, tw, th, eps, epf);
         if(_stkBuf) finalBuf = _stkBuf;
       }catch(_stkE){ console.warn('[sticker] burn failed:', _stkE && _stkE.message); }
+    }
 
-    // เดิม: วาด PNG นิ่งใบเดียว (ไม่ขยับ)  → ใหม่: ใช้ showfreqs/showwaves
-    //       ของ ffmpeg วิเคราะห์เสียงจริง สร้าง waveform ที่ "เต้นตามเพลง"
-    //       แล้ว overlay ลงวิดีโอตามตำแหน่ง/ขนาด/ช่วงเวลาของแต่ละคลิป
+    // ══ WAVEFORM (ffmpeg showfreqs/showwaves เนทีฟ — เร็ว ไม่วาด canvas ทีละเฟรม จึงไม่ค้าง) ══
+    //    รันเสมอเมื่อมีคลิป waveform (ไม่ว่าจะ burn ตัวหนังสือ/โลโก้ ก่อนหน้าสำเร็จหรือไม่)
     var waves = window.S_WAVES || [];
     if(waves.length > 0 && finalBuf && !isAudioOnly){
       // ตรวจว่ามีสตรีมเสียงในไฟล์ final หรือไม่ (จำเป็นสำหรับ showfreqs)
@@ -3329,15 +3329,8 @@ document.getElementById('exp-go').addEventListener('click', async function(){
       var _hasAudio = _anyUnmutedVid || _hasBgAudio;
 
       var _burnOk = false;
-      // ── วิธีหลัก: เรนเดอร์จาก canvas เดียวกับ preview (เหมือนพรีวิว 100%, ไม่มีสีขาวปน) ──
+      // ── showfreqs/showwaves ของ ffmpeg วิเคราะห์เสียงจริง → waveform เต้นตามเพลง (เร็วมาก) ──
       if(_hasAudio){
-        try{
-          var _cvBuf = await burnWaveCanvasSeq(finalBuf, tw, th, parseInt((document.getElementById('exp-fps')&&document.getElementById('exp-fps').value)||30)||30, crf, eps, epf);
-          if(_cvBuf){ finalBuf=_cvBuf; _burnOk=true; }
-        }catch(_cvE){ console.warn('[wave] canvas-seq failed → fallback:', _cvE&&_cvE.message); }
-      }
-      // ── สำรอง: showfreqs/showwaves ของ ffmpeg (ถ้า canvas-seq ล้มเหลว) ──
-      if(_hasAudio && !_burnOk){
         try{
           eps.textContent='〰️ สร้าง waveform ตามจังหวะเพลง...'; epf.style.width='94%';
           _ffmpegLib.FS('writeFile', 'vpw.mp4', new Uint8Array(finalBuf));
@@ -3424,7 +3417,6 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           }
         }catch(we2){ console.warn('[wave] static skip:', we2 && we2.message); }
       }
-    }
     }
     var mimeMap={'mp4':'video/mp4','webm':'video/webm','mp3':'audio/mpeg','aac':'audio/aac'};
     var blob=new Blob([finalBuf],{type:mimeMap[outExt]||'video/mp4'});
@@ -4977,9 +4969,8 @@ async function burnAllOverlays(finalBuf, tw, th, projFps, crf, eps, epf){
     });
   }
   var waves = window.S_WAVES || [];
-  waves.forEach(function(c){
-    jobs.push({ z:_ovGetZ(c,'wave'), kind:'wave', clip:c, tIn:(c.startSec||0), tOut:(c.startSec||0)+(c.dur||5) });
-  });
+  // หมายเหตุ: waveform จัดการแยกด้วย showfreqs ของ ffmpeg เนทีฟ (เร็วกว่าวาด canvas ทีละเฟรมมาก)
+  //           จึงไม่ push เป็น job ที่นี่ เพื่อกันการค้างตอนส่งออก
   if(!jobs.length) return null;
   jobs.sort(function(a,b){ return (a.z||0)-(b.z||0); });   // น้อย→มาก (มากอยู่บนสุด)
 
