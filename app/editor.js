@@ -3394,8 +3394,11 @@ document.getElementById('exp-go').addEventListener('click', async function(){
             var nextV = (k===N-1) ? 'vout' : ('vt'+k);
             var st = Math.max(0, clip.startSec||0).toFixed(2);
             var en = ((clip.startSec||0) + (clip.dur||5)).toFixed(2);
-            // overlay เฉพาะช่วงเวลาของคลิปนั้น (enable) — คอมมาใน between ต้อง escape
-            fcParts.push('['+vCur+'][wv'+k+']overlay=x='+x+':y='+y+":enable='between(t,"+st+","+en+")'["+nextV+']');
+            // overlay เฉพาะช่วงเวลาของคลิปนั้น — ต้อง escape คอมมาใน between() ไม่งั้น filtergraph พัง
+            var ovl = '['+vCur+'][wv'+k+']overlay=x='+x+':y='+y;
+            if(N>1){ ovl += ":enable='between(t\\,"+st+"\\,"+en+")'"; }  // คลิปเดียวเต็มคลิปไม่ต้อง gate
+            ovl += '['+nextV+']';
+            fcParts.push(ovl);
             vCur = nextV;
           });
 
