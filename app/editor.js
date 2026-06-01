@@ -3768,11 +3768,16 @@ if(!window.S_WAVES) window.S_WAVES = [];
   var bgConnected  = false;
 
   function ensureConnections(){
-    var vidEl = document.getElementById('prev-vid');
-    if(vidEl && !vidConnected && vidEl.src){
-      connectSource(vidEl, '_waveVidSrc');
-      vidConnected = true;
-    }
+    // ต่อทั้งสอง element ของ seamless player (A=#prev-vid, B=#prev-vid-b)
+    // เพื่อให้ waveform เต้นตามเสียงทุกคลิป (ไม่ใช่แค่คลิปแรก)
+    var els = [];
+    var a = document.getElementById('prev-vid'); if(a) els.push(a);
+    if(window._vA && els.indexOf(window._vA)<0) els.push(window._vA);
+    if(window._vB && els.indexOf(window._vB)<0) els.push(window._vB);
+    els.forEach(function(el){
+      if(el && el.src && !isConnected(el)) connectSource(el, '_waveVidSrc_'+(el.id||Math.random().toString(36).slice(2,6)));
+    });
+    vidConnected = isConnected(a);
     if(typeof bgAudio !== 'undefined' && !bgConnected && bgAudio.src){
       connectSource(bgAudio, '_waveBgSrc');
       bgConnected = true;
@@ -3899,7 +3904,7 @@ function drawWaveAnimated(canvas, style, baseData, audioTime, realBars){
 
   var c=style.color;
   if(style.id==='bars'){
-    var bw=Math.max(1,W/n-1);
+    var bw=Math.max(3,W/n-1.5);
     for(var i=0;i<n;i++){
       var h=data[i]*H*0.9;
       var grd=ctx.createLinearGradient(0,H-h,0,H);
@@ -3908,8 +3913,8 @@ function drawWaveAnimated(canvas, style, baseData, audioTime, realBars){
       ctx.fillRect(i*(W/n),H-h,bw,h);
     }
   } else if(style.id==='line'){
-    ctx.beginPath(); ctx.strokeStyle=c; ctx.lineWidth=2.5;
-    ctx.shadowBlur=4; ctx.shadowColor=c;
+    ctx.beginPath(); ctx.strokeStyle=c; ctx.lineWidth=4;
+    ctx.shadowBlur=5; ctx.shadowColor=c;
     for(var i=0;i<n;i++){
       var x=i*(W/n), y=H-data[i]*H*0.85;
       i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
@@ -3920,7 +3925,7 @@ function drawWaveAnimated(canvas, style, baseData, audioTime, realBars){
     ctx.fillStyle=c+'55'; ctx.fill();
   } else if(style.id==='mirror'){
     for(var i=0;i<n;i++){
-      var h2=data[i]*H*0.43, x2=i*(W/n), bw2=Math.max(1,W/n-1);
+      var h2=data[i]*H*0.43, x2=i*(W/n), bw2=Math.max(3,W/n-1.5);
       var grd2=ctx.createLinearGradient(0,H/2-h2,0,H/2);
       grd2.addColorStop(0,c); grd2.addColorStop(1,c+'bb');
       ctx.fillStyle=grd2;
@@ -3934,13 +3939,13 @@ function drawWaveAnimated(canvas, style, baseData, audioTime, realBars){
         var dotY=H-(j/steps)*H*0.85-4;
         ctx.fillStyle=c+Math.floor((j/steps)*255).toString(16).padStart(2,'0');
         ctx.beginPath();
-        ctx.arc(i*(W/n)+3,dotY,2.5,0,Math.PI*2);
+        ctx.arc(i*(W/n)+3,dotY,3.5,0,Math.PI*2);
         ctx.fill();
       }
     }
   } else if(style.id==='neon'){
     ctx.shadowBlur=10; ctx.shadowColor=c;
-    [2, 1.5, 0.8].forEach(function(lw, li){
+    [3.5, 2.4, 1.2].forEach(function(lw, li){
       ctx.beginPath(); ctx.strokeStyle=li===0?c:c+'88'; ctx.lineWidth=lw;
       for(var i=0;i<n;i++){
         var x=i*(W/n), y=H/2-data[i]*(H*0.4);
@@ -4167,7 +4172,7 @@ function renderWaveClip(clip){
       var nw = Math.max(40, clip.dur*pxSec());
       el.style.width = nw+'px';
       cv.width = nw;
-      var nd = genWaveData(Math.max(20,Math.floor(nw/5)), clip.seed||1);
+      var nd = genWaveData(Math.max(16,Math.floor(nw/9)), clip.seed||1);
       drawWaveAnimated(cv, style, nd, 0);
     }
     function onUp(){ document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onUp); }
@@ -4401,7 +4406,7 @@ function renderWavePreview(clip, style, data, _sa, _so){
         pvEl.style.left=nx+'%'; pvEl.style.top=ny+'%';
         pvEl.style.width=nw+'%'; pvEl.style.height=nh+'%';
         cv.width=pvEl.offsetWidth||8; cv.height=pvEl.offsetHeight||8;
-        var d2=genWaveData(Math.max(20,Math.floor(cv.width/5)), clip.seed||1);
+        var d2=genWaveData(Math.max(16,Math.floor(cv.width/9)), clip.seed||1);
         var sens=clip.sensitivity!==undefined?clip.sensitivity:1.0;
         var shape=clip.shapeMode||'natural';
         var bars=(typeof window.getWaveFreqBars==='function')?window.getWaveFreqBars(d2.length,sens,shape):null;
@@ -4425,7 +4430,7 @@ function renderWavePreview(clip, style, data, _sa, _so){
     var h = pvEl.offsetHeight || 50;
     if(cv.width !== w) cv.width = w;
     if(cv.height !== h) cv.height = h;
-    var d2 = genWaveData(Math.max(20,Math.floor(w/5)), clip.seed||1);
+    var d2 = genWaveData(Math.max(16,Math.floor(w/9)), clip.seed||1);
     var sens  = clip.sensitivity !== undefined ? clip.sensitivity : 1.0;
     var shape = clip.shapeMode || 'natural';
     var bars  = (typeof window.getWaveFreqBars === 'function') ? window.getWaveFreqBars(d2.length, sens, shape) : null;
@@ -6266,6 +6271,7 @@ function toggleStickerVisibility(id){
     b.style.cssText='position:absolute;left:0;top:0;width:100%;height:100%;background:#000;display:block;z-index:1;object-fit:fill;pointer-events:none;';
     wrap.appendChild(b);
     try{ b.addEventListener('timeupdate', _onVidTimeUpdate); b.addEventListener('ended', _onVidEnded); }catch(e){}
+    try{ ['playing','loadeddata','play'].forEach(function(ev){ b.addEventListener(ev, function(){ if(window._waveEnsureConn) window._waveEnsureConn(); }); }); }catch(e){}
     window._vA=a; window._vB=b; window._seamlessReady=true;
 
     function buffer(){ return (vid===window._vB)?window._vA:window._vB; }
