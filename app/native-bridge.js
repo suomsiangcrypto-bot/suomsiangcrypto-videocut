@@ -65,18 +65,22 @@
       var t = document.querySelector('.logo-txt');
       if(t && t.textContent.indexOf('⚡') < 0) t.textContent = t.textContent + ' ⚡';
 
-      // เพิ่มปุ่มเขียว "⚡ Native Export" ในกล่องส่งออก (ถ้ายังไม่มี)
+      // เพิ่มปุ่มเขียว "⚡ Native Export" เป็นปุ่มส่งออกเดียว (ซ่อนปุ่มเหลืองเดิม)
       var go = document.getElementById('exp-go');
       if(go && !document.getElementById('exp-native')){
+        go.style.display = 'none';   // ซ่อนปุ่มเหลือง — ใช้ปุ่มเขียวพอ
         var nb = document.createElement('button');
         nb.id = 'exp-native';
         nb.className = 'em-btn';
         nb.textContent = '⚡ Native Export';
-        nb.style.cssText = 'background:#22c55e;color:#04210f;border:none;font-weight:800;padding:8px 18px;border-radius:7px;cursor:pointer;font-size:13px;';
+        nb.style.cssText = 'background:#22c55e;color:#04210f;border:none;font-weight:800;padding:9px 22px;border-radius:7px;cursor:pointer;font-size:14px;';
         nb.title = 'รวมและส่งออกด้วย FFmpeg เนทีฟ แล้วบันทึกลงโฟลเดอร์ Videos อัตโนมัติ';
         nb.addEventListener('click', function(){
           if(go.disabled) return;
-          go.click();   // ใช้ขั้นตอนส่งออกเดิมทั้งหมด → finalize จะบันทึกแบบเนทีฟให้เอง
+          nb.disabled = true; nb.textContent = '⚡ กำลังส่งออก...';
+          go.click();   // ใช้ขั้นตอนส่งออกเดิม → finalize บันทึกแบบเนทีฟ
+          // คืนปุ่มเมื่อเสร็จ/พลาด (เช็คจากปุ่มเหลืองที่ถูก enable กลับ)
+          var iv = setInterval(function(){ if(!go.disabled){ nb.disabled=false; nb.textContent='⚡ Native Export'; clearInterval(iv); } }, 800);
         });
         go.parentNode.appendChild(nb);
       }
