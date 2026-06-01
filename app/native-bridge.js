@@ -90,11 +90,17 @@
         nb.style.cssText = 'background:#22c55e;color:#04210f;border:none;font-weight:800;padding:9px 22px;border-radius:7px;cursor:pointer;font-size:14px;';
         nb.title = 'รวมและส่งออกด้วย FFmpeg เนทีฟ แล้วบันทึกลงโฟลเดอร์ Videos อัตโนมัติ';
         nb.addEventListener('click', function(){
-          if(go.disabled) return;
+          if(go.disabled || window._exporting){ return; }   // กันกดซ้ำระหว่างส่งออก
           nb.disabled = true; nb.textContent = '⚡ กำลังส่งออก...';
           go.click();   // ใช้ขั้นตอนส่งออกเดิม → finalize บันทึกแบบเนทีฟ
-          // คืนปุ่มเมื่อเสร็จ/พลาด (เช็คจากปุ่มเหลืองที่ถูก enable กลับ)
-          var iv = setInterval(function(){ if(!go.disabled){ nb.disabled=false; nb.textContent='⚡ Native Export'; clearInterval(iv); } }, 800);
+          // รอจนส่งออกเสร็จ (go ถูก enable กลับ) แล้วแสดงสถานะเสร็จ — เว้น 4 วิ กันกดซ้ำรัว ๆ
+          var iv = setInterval(function(){
+            if(!go.disabled && !window._exporting){
+              clearInterval(iv);
+              nb.textContent = '✅ บันทึกแล้ว (ดูที่โฟลเดอร์ Videos)';
+              setTimeout(function(){ nb.disabled = false; nb.textContent = '⚡ Native Export'; }, 4000);
+            }
+          }, 500);
         });
         go.parentNode.appendChild(nb);
       }

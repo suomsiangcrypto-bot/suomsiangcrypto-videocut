@@ -3035,8 +3035,10 @@ document.getElementById('btn-redo').addEventListener('click',function(){showToas
 // EXPORT — รวมทุกคลิปในไทม์ไลน์แล้วดาวน์โหลด
 // ═══════════════════════════════════════
 document.getElementById('exp-go').addEventListener('click', async function(){
+  if(window._exporting){ console.warn('[export] กำลังส่งออกอยู่ — ข้ามคำสั่งซ้ำ'); return; }
+  window._exporting = true;
   buildQueue();
-  if(!playQueue.length){ showToast('⚠️ ลากวิดีโอมาใส่ไทม์ไลน์ก่อน'); return; }
+  if(!playQueue.length){ showToast('⚠️ ลากวิดีโอมาใส่ไทม์ไลน์ก่อน'); window._exporting=false; return; }
   var btn=this; btn.disabled=true; btn.textContent='⏳ กำลังโหลด FFmpeg...';
   var ok=await loadFFmpeg();
   if(!ok){ btn.disabled=false; btn.textContent='🚀 เริ่มรวมและส่งออก'; return; }
@@ -3500,14 +3502,15 @@ document.getElementById('exp-go').addEventListener('click', async function(){
     eps.textContent='✅ รวม '+playQueue.length+' คลิปสำเร็จ! ขนาด: '+(blob.size/1024/1024).toFixed(1)+' MB';
     showToast('🎉 รวมวิดีโอสำเร็จ! กดดาวน์โหลดได้เลย');
 
-    // ดาวน์โหลดอัตโนมัติทันที
-    triggerDownload();
+    // ดาวน์โหลดอัตโนมัติ — เฉพาะโหมดเบราว์เซอร์ (โหมดเนทีฟบันทึกลง Videos ไปแล้ว ไม่ต้องโหลดซ้ำ)
+    if(!window.IS_NATIVE){ triggerDownload(); }
 
   }catch(err){
     eps.textContent='❌ '+err.message;
     showToast('❌ Export ไม่สำเร็จ: '+err.message.substring(0,50));
     console.error('[Export]',err);
   }
+  window._exporting = false;
   btn.disabled=false; btn.textContent='🚀 เริ่มรวมและส่งออก';
 });
 
