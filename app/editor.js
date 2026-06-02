@@ -3007,13 +3007,24 @@ function hexToRgba(hex,alpha){
     return 'rgba('+r+','+g+','+b+','+(alpha||1)+')';
   }catch(e){return hex;}
 }
-function openExp(){document.getElementById('exp-bg').classList.add('show');}
+function _toggleWaveOverlaysForExport(hide){
+  (window.S_WAVES||[]).forEach(function(c){
+    var el=document.getElementById('wcp-'+c.id); if(!el) return;
+    if(hide){ el.style.display='none'; }
+    else {
+      var gt=window._waveGlobalTime||0;
+      el.style.display=(gt>=(c.startSec||0) && gt<((c.startSec||0)+(c.dur||5)))?'block':'none';
+    }
+  });
+}
+function openExp(){ _toggleWaveOverlaysForExport(true); document.getElementById('exp-bg').classList.add('show'); }
 document.getElementById('btn-exp').addEventListener('click',openExp);
 document.getElementById('exp-cancel').addEventListener('click',function(){
   window._exportCancel = true;
   if(window.ffNative && window.ffNative.cancel){ try{ window.ffNative.cancel(); }catch(e){} }  // หยุด ffmpeg ที่กำลังวิ่งจริง
   window._exporting = false;
   document.getElementById('exp-bg').classList.remove('show');
+  _toggleWaveOverlaysForExport(false);
   showToast('⏹ ยกเลิกการส่งออกแล้ว');
 });
 document.getElementById('exp-bg').addEventListener('click',function(e){if(e.target===this)this.classList.remove('show');});
