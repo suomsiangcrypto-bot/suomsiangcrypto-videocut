@@ -3009,7 +3009,13 @@ function hexToRgba(hex,alpha){
 }
 function openExp(){document.getElementById('exp-bg').classList.add('show');}
 document.getElementById('btn-exp').addEventListener('click',openExp);
-document.getElementById('exp-cancel').addEventListener('click',function(){document.getElementById('exp-bg').classList.remove('show');});
+document.getElementById('exp-cancel').addEventListener('click',function(){
+  window._exportCancel = true;
+  if(window.ffNative && window.ffNative.cancel){ try{ window.ffNative.cancel(); }catch(e){} }  // หยุด ffmpeg ที่กำลังวิ่งจริง
+  window._exporting = false;
+  document.getElementById('exp-bg').classList.remove('show');
+  showToast('⏹ ยกเลิกการส่งออกแล้ว');
+});
 document.getElementById('exp-bg').addEventListener('click',function(e){if(e.target===this)this.classList.remove('show');});
 document.querySelectorAll('.em-ar').forEach(function(el){
   el.addEventListener('click',function(){
@@ -3037,6 +3043,9 @@ document.getElementById('btn-redo').addEventListener('click',function(){showToas
 document.getElementById('exp-go').addEventListener('click', async function(){
   if(window._exporting){ console.warn('[export] กำลังส่งออกอยู่ — ข้ามคำสั่งซ้ำ'); return; }
   window._exporting = true;
+  window._exportCancel = false;
+  var myRun = (window._exportRunId = (window._exportRunId||0) + 1);
+  if(window.ffNative && window.ffNative.resetCancel){ try{ window.ffNative.resetCancel(); }catch(e){} }
   buildQueue();
   if(!playQueue.length){ showToast('⚠️ ลากวิดีโอมาใส่ไทม์ไลน์ก่อน'); window._exporting=false; return; }
   var btn=this; btn.disabled=true; btn.textContent='⏳ กำลังโหลด FFmpeg...';
@@ -3084,6 +3093,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
 
   try{
     for(var i=0;i<playQueue.length;i++){
+      if(window._exportCancel || window._exportRunId!==myRun) throw new Error('ยกเลิกการส่งออกแล้ว');
       var qItem=playQueue[i];
       var entry=qItem.entry; var c=qItem.c;
       var stepEl=document.getElementById('exp-step-'+i);
@@ -3506,9 +3516,14 @@ document.getElementById('exp-go').addEventListener('click', async function(){
     if(!window.IS_NATIVE){ triggerDownload(); }
 
   }catch(err){
-    eps.textContent='❌ '+err.message;
-    showToast('❌ Export ไม่สำเร็จ: '+err.message.substring(0,50));
-    console.error('[Export]',err);
+    var _isCancel = err && err.message && err.message.indexOf('ยกเลิก')>=0;
+    if(_isCancel){
+      eps.textContent='⏹ ยกเลิกการส่งออกแล้ว';
+    } else {
+      eps.textContent='❌ '+err.message;
+      showToast('❌ Export ไม่สำเร็จ: '+err.message.substring(0,50));
+      console.error('[Export]',err);
+    }
   }
   window._exporting = false;
   btn.disabled=false; btn.textContent='🚀 เริ่มรวมและส่งออก';

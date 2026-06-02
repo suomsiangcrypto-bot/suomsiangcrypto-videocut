@@ -67,16 +67,27 @@ contextBridge.exposeInMainWorld('ffNative', {
   run: function(args){
     return new Promise(function(resolve, reject){
       if(!ffmpegPath){ reject(new Error('ไม่พบไบนารี ffmpeg (ffmpeg-static)')); return; }
+      if(global.__ffCancelled){ reject(new Error('ยกเลิกการส่งออกแล้ว')); return; }
       const p = spawn(ffmpegPath, args, { cwd: tmpDir });
+      global.__ffChild = p;
       let err = '';
       p.stderr.on('data', function(d){ err += d.toString(); if(err.length > 24000) err = err.slice(-24000); });
-      p.on('error', function(e){ reject(e); });
+      p.on('error', function(e){ global.__ffChild = null; reject(e); });
       p.on('close', function(code){
+        global.__ffChild = null;
+        if(global.__ffCancelled){ reject(new Error('ยกเลิกการส่งออกแล้ว')); return; }
         if(code === 0) resolve({ code: 0 });
         else reject(new Error('ffmpeg exited with code ' + code + '\n' + err.slice(-700)));
       });
     });
   },
+
+  cancel: function(){
+    global.__ffCancelled = true;
+    if(global.__ffChild){ try{ global.__ffChild.kill('SIGKILL'); }catch(e){} global.__ffChild = null; }
+    return true;
+  },
+  resetCancel: function(){ global.__ffCancelled = false; return true; },
 
   // บันทึกไฟล์ผลลัพธ์ลงโฟลเดอร์ Videos ของผู้ใช้ แล้วคืน path เต็ม
   saveOutput: function(srcName, outFileName){
