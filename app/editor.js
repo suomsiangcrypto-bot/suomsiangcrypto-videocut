@@ -3396,7 +3396,12 @@ document.getElementById('exp-go').addEventListener('click', async function(){
               case 'line':   viz='showwaves=s='+w+'x'+h+':mode=cline:rate=30:scale=sqrt:colors='+col; break;
               case 'neon':   viz='showwaves=s='+w+'x'+h+':mode=line:rate=30:scale=sqrt:colors='+col; break;
               case 'mirror': viz='showwaves=s='+w+'x'+h+':mode=p2p:rate=30:scale=sqrt:colors='+col; break;
+              case 'wave':   viz='showwaves=s='+w+'x'+h+':mode=p2p:rate=30:scale=sqrt:colors='+col; break;
+              case 'spikes': viz='showwaves=s='+w+'x'+h+':mode=p2p:rate=30:scale=lin:colors='+col; break;
               case 'dots':   viz='showfreqs=s='+w+'x'+h+':mode=dot:ascale=cbrt:fscale=log:colors='+col; break;
+              case 'blocks': viz='showfreqs=s='+w+'x'+h+':mode=bar:ascale=cbrt:fscale=log:colors='+col; break;
+              case 'rounded':viz='showfreqs=s='+w+'x'+h+':mode=bar:ascale=cbrt:fscale=log:colors='+col; break;
+              case 'rainbow':viz='showfreqs=s='+w+'x'+h+':mode=bar:ascale=cbrt:fscale=log:colors=0xff0000|0xffff00|0x00ff00|0x00ffff|0x0000ff'; break;
               case 'circle': // ไม่มี viz วงกลมตรง ๆ → ใช้ bar ที่ยังเต้นตามเพลง
               case 'bars':
               default:       viz='showfreqs=s='+w+'x'+h+':mode=bar:ascale=cbrt:fscale=log:colors='+col; break;
@@ -3759,6 +3764,11 @@ var WAVE_STYLES = [
   { id:'dots',   name:'Dots',   ico:'⠿',  color:'#7fff00', bg:'transparent', desc:'จุดกระจาย' },
   { id:'neon',   name:'Neon',   ico:'💡', color:'#ff6f00', bg:'transparent', desc:'นีออน glow' },
   { id:'circle', name:'Circle', ico:'🔵', color:'#b388ff', bg:'transparent', desc:'วงกลม' },
+  { id:'blocks', name:'Blocks', ico:'🟩', color:'#00e676', bg:'transparent', desc:'แท่ง LED แบ่งช่อง' },
+  { id:'wave',   name:'Wave',   ico:'🌊', color:'#29b6f6', bg:'transparent', desc:'คลื่นทึบนุ่ม' },
+  { id:'spikes', name:'Spikes', ico:'📶', color:'#ffeb3b', bg:'transparent', desc:'แท่งเข็มกลาง' },
+  { id:'rainbow',name:'Rainbow',ico:'🌈', color:'#ff5252', bg:'transparent', desc:'แท่งไล่สีรุ้ง' },
+  { id:'rounded',name:'Rounded',ico:'💊', color:'#ff80ab', bg:'transparent', desc:'แท่งหัวมน' },
 ];
 if(!window.S_WAVES) window.S_WAVES = [];
 
@@ -4023,6 +4033,56 @@ function drawWaveAnimated(canvas, style, baseData, audioTime, realBars){
       ctx.strokeStyle=c; ctx.lineWidth=2; ctx.stroke();
     }
     ctx.shadowBlur=0;
+  } else if(style.id==='blocks'){
+    // แท่ง LED แบ่งเป็นช่อง ๆ
+    var bwB=Math.max(4,W/n-2);
+    var segH=Math.max(3,H/12), gap=2;
+    for(var i=0;i<n;i++){
+      var lit=Math.floor(data[i]*(H/(segH+gap)));
+      for(var s=0;s<lit;s++){
+        var yB=H-(s+1)*(segH+gap);
+        var t=s/(H/(segH+gap));
+        ctx.fillStyle = t>0.8 ? '#ff5252' : (t>0.55 ? '#ffd740' : c);
+        ctx.fillRect(i*(W/n), yB, bwB, segH);
+      }
+    }
+  } else if(style.id==='wave'){
+    // คลื่นทึบนุ่ม (สะท้อนกลาง เติมสี)
+    ctx.beginPath();
+    for(var i=0;i<n;i++){ var x=i*(W/n), y=H/2-data[i]*(H*0.45); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); }
+    for(var i=n-1;i>=0;i--){ var x2=i*(W/n), y2=H/2+data[i]*(H*0.45); ctx.lineTo(x2,y2); }
+    ctx.closePath();
+    var grdW=ctx.createLinearGradient(0,0,0,H);
+    grdW.addColorStop(0,c+'33'); grdW.addColorStop(0.5,c); grdW.addColorStop(1,c+'33');
+    ctx.fillStyle=grdW; ctx.fill();
+  } else if(style.id==='spikes'){
+    // แท่งเข็มบางจากแกนกลางขึ้น-ลง
+    ctx.strokeStyle=c; ctx.lineWidth=Math.max(1.5,W/n*0.35); ctx.lineCap='round';
+    ctx.shadowBlur=4; ctx.shadowColor=c;
+    for(var i=0;i<n;i++){
+      var x=i*(W/n)+ (W/n)/2, h=data[i]*H*0.46;
+      ctx.beginPath(); ctx.moveTo(x,H/2-h); ctx.lineTo(x,H/2+h); ctx.stroke();
+    }
+    ctx.shadowBlur=0;
+  } else if(style.id==='rainbow'){
+    // แท่งไล่สีรุ้งตามตำแหน่ง
+    var bwR=Math.max(3,W/n-1.5);
+    for(var i=0;i<n;i++){
+      var h=data[i]*H*0.9;
+      ctx.fillStyle='hsl('+Math.round((i/n)*330)+',90%,55%)';
+      ctx.fillRect(i*(W/n),H-h,bwR,h);
+    }
+  } else if(style.id==='rounded'){
+    // แท่งหัวมน (capsule)
+    var bwC=Math.max(4,W/n-3);
+    ctx.fillStyle=c;
+    for(var i=0;i<n;i++){
+      var h=Math.max(bwC,data[i]*H*0.9), x=i*(W/n), rC=bwC/2;
+      ctx.beginPath();
+      if(ctx.roundRect){ ctx.roundRect(x,H-h,bwC,h,rC); }
+      else { ctx.rect(x,H-h,bwC,h); }
+      ctx.fill();
+    }
   }
 }
 
@@ -4170,11 +4230,9 @@ function renderWaveClip(clip){
   window.addEventListener('wave-play',  startAnim);
   window.addEventListener('wave-stop',  stopAnim);
   var vidEl = document.getElementById('prev-vid');
-  if(vidEl){
-    vidEl.addEventListener('play', startAnim);
-    vidEl.addEventListener('pause', stopAnim);
-    vidEl.addEventListener('ended', stopAnim);
-  }
+  var _vbAnim = window._vB || document.getElementById('prev-vid-b');
+  [vidEl, _vbAnim].forEach(function(ve){ if(ve){ ve.addEventListener('play', startAnim); } });
+  // ไม่ผูก stop กับ pause/ended ของวิดีโอ (กันลูปหยุดตอนสลับคลิป) — หยุดด้วย wave-stop แทน
 
   // delete
   var del = document.createElement('div');
@@ -4520,10 +4578,11 @@ function renderWavePreview(clip, style, data, _sa, _so){
     if(pvEl.style.display === 'block') pvDraw();
   }
 
+  window.addEventListener('wave-play', startPv);
+  window.addEventListener('wave-stop', stopPv);
+  var _vbPv = window._vB || document.getElementById('prev-vid-b');
+  [vidEl, _vbPv].forEach(function(ve){ if(ve){ ve.addEventListener('play', startPv); } });
   if(vidEl){
-    vidEl.addEventListener('play', startPv);
-    vidEl.addEventListener('pause', stopPv);
-    vidEl.addEventListener('ended', function(){ pvAnimRunning=false; cancelAnimationFrame(pvRAFId); pvEl.style.display='none'; });
     vidEl.addEventListener('timeupdate', function(){
       if(!pvAnimRunning){
         var gt3 = (window.playQueueOffset||0)+(vidEl.currentTime||0);
