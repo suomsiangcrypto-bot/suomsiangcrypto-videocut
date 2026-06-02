@@ -2,7 +2,7 @@
 // PRELOAD — เปิด API เนทีฟให้ renderer เรียก FFmpeg ของเครื่อง
 //   ทำงานใน process ที่มี Node (fs / child_process) แต่ renderer แยก context
 // ───────────────────────────────────────────────
-const { contextBridge } = require('electron');
+const { contextBridge, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -88,6 +88,10 @@ contextBridge.exposeInMainWorld('ffNative', {
     return true;
   },
   resetCancel: function(){ global.__ffCancelled = false; return true; },
+
+  // เปิดโฟลเดอร์ที่มีไฟล์ (ไฮไลต์ไฟล์) / เปิดไฟล์ด้วยโปรแกรมเริ่มต้น
+  showInFolder: function(p){ try{ shell.showItemInFolder(p); return true; }catch(e){ return false; } },
+  openFile: function(p){ try{ shell.openPath(p); return true; }catch(e){ return false; } },
 
   // บันทึกไฟล์ผลลัพธ์ลงโฟลเดอร์ Videos ของผู้ใช้ แล้วคืน path เต็ม
   saveOutput: function(srcName, outFileName){

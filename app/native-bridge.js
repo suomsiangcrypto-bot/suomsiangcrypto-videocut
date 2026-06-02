@@ -66,6 +66,9 @@
     window.ffNative.writeFile(tmpName, u8);
     var dest = window.ffNative.saveOutput(tmpName, fname);
     try{ window.ffNative.unlink(tmpName); }catch(e){}
+    window._lastSavedPath = dest;
+    // เปิดโฟลเดอร์ Videos ให้เห็นไฟล์ทันที (ไฮไลต์ไฟล์ที่เพิ่งบันทึก)
+    try{ if(dest && window.ffNative.showInFolder) window.ffNative.showInFolder(dest); }catch(e){}
     return dest;
   };
 

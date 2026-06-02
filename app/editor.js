@@ -3465,8 +3465,17 @@ document.getElementById('exp-go').addEventListener('click', async function(){
         if(_np){
           if(dl) dl.style.display='none';
           epf.style.width='100%';
-          eps.innerHTML='✅ บันทึกแล้ว: <span style="color:#22c55e;word-break:break-all;">'+_np+'</span>';
-          showToast('✅ บันทึกไฟล์แล้ว');
+          eps.innerHTML='✅ บันทึกแล้ว!<br><span style="color:#22c55e;word-break:break-all;font-size:11px;">'+_np+'</span>'
+            + '<div style="margin-top:10px;display:flex;gap:8px;justify-content:center;">'
+            + '<button id="exp-open-file" style="background:#22c55e;color:#04210f;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:800;">▶ เปิดวิดีโอ</button>'
+            + '<button id="exp-open-dir" style="background:var(--p2);color:var(--tx);border:1px solid var(--bd2);padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:700;">📂 เปิดโฟลเดอร์</button>'
+            + '</div>';
+          var _of=document.getElementById('exp-open-file');
+          if(_of) _of.onclick=function(){ try{ window.ffNative.openFile(_np); }catch(e){} };
+          var _od=document.getElementById('exp-open-dir');
+          if(_od) _od.onclick=function(){ try{ window.ffNative.showInFolder(_np); }catch(e){} };
+          showToast('✅ บันทึกแล้ว — เปิดโฟลเดอร์ให้แล้ว');
+          window._exporting=false;
           btn.disabled=false; btn.textContent='⚡ Native Export';
           return;
         }
