@@ -503,6 +503,28 @@ document.getElementById('fi').accept='video/*,audio/*,image/*';
     });
   });
 })();
+// ── กันคลิปบนแทร็กเดียวกันซ้อนทับกัน (เหมือนโปรแกรมตัดต่อจริง: ดันให้ชนขอบพอดี ไม่ค่อม) ──
+function _resolveTrackOverlap(el, c){
+  if(!c || c.type!=='audio') return;   // กันซ้อนเฉพาะแทร็กเสียง (ไม่กระทบการเรียงวิดีโอ)
+  var track = el.parentElement; if(!track) return;
+  var w = c.w || parseFloat(el.style.width) || 0;
+  var others = Array.from(track.querySelectorAll('.clip')).filter(function(x){ return x!==el; })
+    .map(function(x){ var L=parseFloat(x.style.left)||0, W=parseFloat(x.style.width)||0; return {L:L,R:L+W}; })
+    .sort(function(a,b){ return a.L-b.L; });
+  var L=c.left, guard=0;
+  for(var i=0;i<others.length && guard<300;i++){
+    var o=others[i];
+    if(L < o.R && (L+w) > o.L){            // ซ้อนกัน
+      var ctr=L+w/2, oc=(o.L+o.R)/2;
+      if(ctr>=oc){ L=o.R; } else { L=Math.max(0, o.L - w); }   // หลังกึ่งกลาง→ต่อท้าย, ก่อน→วางหน้า
+      i=-1; guard++;                        // ตรวจใหม่เผื่อชนตัวถัดไป
+    }
+  }
+  c.left=Math.max(0,L);
+  c.startSec=c.left/pxSec();
+  el.style.left=c.left+'px';
+}
+
 function renderML(){
   var ml=document.getElementById('ml');
   ml.innerHTML='';
@@ -599,6 +621,8 @@ function setupTrackDrop(trackEl){
     var startSec=xInTrack/ps;
     S.clips[cid]={id:cid,fid:entry.id,dur:entry.dur,w:w,left:xInTrack,startSec:startSec,type:entry.type||'video'};
     buildClip(cid,trackEl,entry);
+    var _newEl=trackEl.querySelector('[data-cid="'+cid+'"]');
+    if(_newEl) _resolveTrackOverlap(_newEl, S.clips[cid]);   // กันวางซ้อนคลิปอื่น → ดันชนขอบพอดี
     drawRuler();
     showToast('🎬 วาง '+entry.name);
     if(entry.type==='image') loadImagePreview(entry);
@@ -920,21 +944,43 @@ function buildClip(cid, track, entry){
     if(S.activeId===cid && !isAudio) vid.muted = c.muted||false;
   });
 
-  // Drag move
+  // Drag move (มี snap ดูดชนขอบ + เส้นไกด์ + กันซ้อนเหมือนโปรแกรมตัดต่อจริง)
   el.addEventListener('mousedown', function(e){
     if(e.target.classList.contains('clip-hdl')) return;
     if(e.target.classList.contains('clip-mute')) return;
     var sx=e.clientX, sl=parseFloat(el.style.left);
     saveUndo();
+    var track=el.parentElement;
+    var SNAP=8; // px
+    if(track && getComputedStyle(track).position==='static') track.style.position='relative';
+    function siblings(){ return Array.from(track.querySelectorAll('.clip')).filter(function(x){ return x!==el; }); }
+    var guide=null;
+    function showGuide(xpx){
+      if(!guide){ guide=document.createElement('div'); guide.className='snap-guide'; guide.style.cssText='position:absolute;top:0;bottom:0;width:2px;background:#22d3ee;z-index:60;pointer-events:none;box-shadow:0 0 7px #22d3ee;'; track.appendChild(guide); }
+      guide.style.left=xpx+'px'; guide.style.display='block';
+    }
+    function hideGuide(){ if(guide) guide.style.display='none'; }
     var mm=function(e2){
-      c.left=Math.max(0,sl+e2.clientX-sx);
-      c.startSec=c.left/pxSec(); // sync startSec
-      el.style.left=c.left+'px';
-      snapUpdateNow(); // อัปเดต marker ทันที ไม่ delay
+      var raw=Math.max(0, sl+e2.clientX-sx);
+      var w=c.w||parseFloat(el.style.width)||0;
+      // จุดที่ดูดได้: 0, ขอบซ้าย/ขวาของคลิปอื่นบนแทร็กเดียวกัน, เข็มแดง
+      var targets=[0];
+      siblings().forEach(function(x){ var xl=parseFloat(x.style.left)||0, xw=parseFloat(x.style.width)||0; targets.push(xl); targets.push(xl+xw); });
+      var phEl=document.getElementById('tl-ph'); if(phEl){ var phx=parseFloat(phEl.style.left); if(!isNaN(phx)) targets.push(phx); }
+      var snapped=raw, snapX=null, bestD=SNAP+1;
+      targets.forEach(function(t){
+        var dL=Math.abs(raw-t);          if(dL<=SNAP && dL<bestD){ bestD=dL; snapped=t;   snapX=t; }       // ขอบซ้ายชน
+        var dR=Math.abs((raw+w)-t);       if(dR<=SNAP && dR<bestD){ bestD=dR; snapped=t-w; snapX=t; }       // ขอบขวาชน
+      });
+      c.left=Math.max(0,snapped); c.startSec=c.left/pxSec(); el.style.left=c.left+'px';
+      if(snapX!==null) showGuide(snapX); else hideGuide();
+      snapUpdateNow();
     };
     var mu=function(){
       document.removeEventListener('mousemove',mm);
       document.removeEventListener('mouseup',mu);
+      hideGuide(); if(guide && guide.parentElement){ guide.parentElement.removeChild(guide); }
+      _resolveTrackOverlap(el, c);   // กันซ้อน: ดันให้ชนขอบพอดี
       c.startSec=c.left/pxSec();
       snapUpdateNow();
     };
