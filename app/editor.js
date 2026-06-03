@@ -3256,6 +3256,13 @@ document.getElementById('exp-go').addEventListener('click', async function(){
   var epw=document.getElementById('ep-wrap'); epw.style.display='block';
   var epf=document.getElementById('ep-fill'); epf.style.width='0';
   var eps=document.getElementById('ep-stat');
+  var epp=document.getElementById('ep-pct'); if(epp){ epp.style.display='block'; epp.textContent='0%'; }
+  if(window._pctIv) clearInterval(window._pctIv);
+  window._pctIv=setInterval(function(){
+    var f=document.getElementById('ep-fill'), p=document.getElementById('ep-pct');
+    if(f&&p){ p.textContent=Math.round(parseFloat(f.style.width)||0)+'%'; }
+    if(!window._exporting){ if(p) p.textContent='100%'; clearInterval(window._pctIv); window._pctIv=null; }
+  },150);
   var dl=document.getElementById('exp-dl');
   dl.style.display='none';
   btn.textContent='⏳ กำลังรวมวิดีโอ...';
@@ -3583,20 +3590,16 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           amixLabels.push('[bg'+mi+']'); inNo++;
         }
         var nMix=amixLabels.length, parts=[];
-        var _T=calcTotalDur(), _V=_expTotal||0, _hold=Math.max(0,_T-_V);
-        // แช่เฟรมวิดีโอสุดท้ายให้ยาวเท่างาน (กรณีเพลงยาวกว่าวิดีโอ → เล่นต่อจนจบเพลง)
-        var vSrc='0:v', _vFiltered=false;
-        if(_hold>0.08){ parts.push('[0:v]tpad=stop_mode=clone:stop_duration='+_hold.toFixed(3)+'[vhold]'); vSrc='vhold'; _vFiltered=true; }
-        // เสียงรวม → [aud]
-        if(nMix>1){ parts.push((fcM.length?fcM.join(';')+';':'')+amixLabels.join('')+'amix=inputs='+nMix+':duration=longest:dropout_transition=0[mxa];[mxa]volume='+nMix+'[aud]'); }
-        else { parts.push('[0:a]apad[aud]'); }
+        // เสียงรวม → [aud] (ความยาว = วิดีโอ; เพลงตัดให้พอดีอยู่แล้ว)
+        if(nMix>1){ parts.push((fcM.length?fcM.join(';')+';':'')+amixLabels.join('')+'amix=inputs='+nMix+':duration=first:dropout_transition=0[mxa];[mxa]volume='+nMix+'[aud]'); }
+        else { parts.push('[0:a]anull[aud]'); }
         var vMap, aMap, vCodec;
         if(_needWave){
           parts.push('[aud]asplit=2[awave][afin]');
           var Nw=_wvClips.length, waveLabels=[];
           if(Nw===1){ waveLabels=['awave']; }
           else { var so=''; for(var s0=0;s0<Nw;s0++){ so+='[aw'+s0+']'; waveLabels.push('aw'+s0); } parts.push('[awave]asplit='+Nw+so); }
-          var vCur=vSrc;
+          var vCur='0:v';
           _wvClips.forEach(function(clip,k){
             var style=WAVE_STYLES.find(function(s){return s.id===clip.styleId;})||WAVE_STYLES[0];
             var col='0x'+String(style.color||'#f5c518').replace('#','').slice(0,6);
@@ -3615,12 +3618,10 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           });
           vMap='[vout]'; aMap='[afin]'; vCodec=['-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p'];
         } else {
-          if(_vFiltered){ vMap='['+vSrc+']'; vCodec=['-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p']; }
-          else { vMap='0:v'; vCodec=['-c:v','copy']; }
-          aMap='[aud]';
+          vMap='0:v'; aMap='[aud]'; vCodec=['-c:v','copy'];
         }
         var outF='mixwave_out.mp4';
-        var mwArgs=mixIn.concat(['-filter_complex', parts.join(';'), '-map',vMap,'-map',aMap], vCodec, ['-c:a','aac','-ar','44100','-ac','2','-b:a','192k','-t',_T.toFixed(3), outF]);
+        var mwArgs=mixIn.concat(['-filter_complex', parts.join(';'), '-map',vMap,'-map',aMap], vCodec, ['-c:a','aac','-ar','44100','-ac','2','-b:a','192k', outF]);
         console.log('[mixwave] filter:', parts.join(';'));
         await ffExec(mwArgs);
         try{ clearInterval(_cwPg); }catch(e){}
@@ -3632,7 +3633,31 @@ document.getElementById('exp-go').addEventListener('click', async function(){
       } catch(mwErr){
         try{ clearInterval(_cwPg); }catch(e){}
         if(window._exportCancel || window._exportRunId!==myRun) throw mwErr;
-        console.warn('[mixwave] รวม mix+wave ล้มเหลว → ใช้วิธีแยก:', mwErr && mwErr.message);
+        console.warn('[mixwave] รวม mix+wave ล้มเหลว → ลอง mix เพลงอย่างเดียว:', mwErr && mwErr.message);
+        // สำรอง: mix เพลงล้วน (ไม่มี waveform) เพื่อไม่ให้เสียงหาย
+        try{
+          if(audioClips.length>0){
+            _ffmpegLib.FS('writeFile','vid_premix.mp4', new Uint8Array(finalBuf));
+            var mIn=['-i','vid_premix.mp4'], mFc=[], mLab=['[0:a]'], mNo=1, mWr=[];
+            for(var bi=0; bi<audioClips.length; bi++){
+              var bac=audioClips[bi], bae=S.files.find(function(f){return f.id===bac.fid;});
+              if(!bae) continue;
+              var bfn='bgo_'+bi+'.'+((bae.name.split('.').pop()||'mp3').toLowerCase());
+              await ffWrite(bfn, bae.file); mWr.push(bfn);
+              var bst=(bac.startSec!==undefined)?bac.startSec:(bac.left/pxSec());
+              var btIn=bac.tIn||0, bpl=(bac.w&&bac.w>0)?(bac.w/pxSec()):bac.dur;
+              mIn.push('-ss', btIn.toFixed(3), '-t', Math.max(0.05,bpl).toFixed(3), '-i', bfn);
+              mFc.push('['+mNo+':a]adelay='+Math.max(0,Math.round(bst*1000))+'|'+Math.max(0,Math.round(bst*1000))+',volume=0.9[bgo'+bi+']');
+              mLab.push('[bgo'+bi+']'); mNo++;
+            }
+            var bN=mLab.length;
+            var bFc=(mFc.length?mFc.join(';')+';':'')+mLab.join('')+'amix=inputs='+bN+':duration=first:dropout_transition=0[mx];[mx]volume='+bN+'[ao]';
+            await ffExec(mIn.concat(['-filter_complex',bFc,'-map','0:v:0','-map','[ao]','-c:v','copy','-c:a','aac','-b:a','192k','mixonly.mp4']));
+            var bRes=_ffmpegLib.FS('readFile','mixonly.mp4');
+            if(bRes && bRes.length>1000){ finalBuf=bRes.buffer; console.log('[mixwave] สำรอง mix เพลงสำเร็จ'); }
+            try{ffDel('vid_premix.mp4');}catch(e){} mWr.forEach(function(w){try{ffDel(w);}catch(e){}}); try{ffDel('mixonly.mp4');}catch(e){}
+          }
+        }catch(b2){ console.warn('[mixwave] สำรองก็ล้ม:', b2&&b2.message); }
       }
     }
 

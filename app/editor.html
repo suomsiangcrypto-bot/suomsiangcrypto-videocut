@@ -313,9 +313,10 @@ canvas#ruler-c{display:block;cursor:ew-resize;user-select:none;}
 .em-ar .nm{font-size:11px;font-weight:700;color:#888;}
 .em-ar.on .nm{color:var(--acc);}
 .em-ar .pl{font-size:9px;color:#555;}
-#ep-wrap{height:7px;background:#333;border-radius:4px;overflow:hidden;margin-top:9px;display:none;}
-#ep-fill{height:100%;background:linear-gradient(90deg,var(--acc),#22c55e);width:0;transition:width .3s;}
-#ep-stat{font-size:11px;color:var(--tx2);text-align:center;margin-top:5px;min-height:15px;}
+#ep-pct{display:none;text-align:center;font-size:40px;font-weight:900;line-height:1;color:var(--acc);margin:10px 0 4px;letter-spacing:1px;text-shadow:0 0 14px rgba(245,197,24,.35);}
+#ep-wrap{height:16px;background:#2a2a2a;border-radius:9px;overflow:hidden;margin-top:6px;display:none;box-shadow:inset 0 1px 3px rgba(0,0,0,.5);}
+#ep-fill{height:100%;background:linear-gradient(90deg,var(--acc),#22c55e);width:0;transition:width .25s;border-radius:9px;box-shadow:0 0 10px rgba(34,197,94,.5);}
+#ep-stat{font-size:12px;color:var(--tx2);text-align:center;margin-top:7px;min-height:16px;font-weight:600;}
 #exp-dl{display:none;width:100%;margin-top:10px;padding:10px;background:var(--grn);color:#fff;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;text-decoration:none;text-align:center;}
 .em-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;}
 .em-btn{padding:8px 18px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;}
@@ -924,6 +925,7 @@ canvas#ruler-c{display:block;cursor:ew-resize;user-select:none;}
       <div style="font-size:11px;color:var(--tx2);margin-bottom:6px;font-weight:600;">ขั้นตอนการรวมวิดีโอ</div>
       <div id="exp-step-list" style="display:flex;flex-direction:column;gap:4px;"></div>
     </div>
+    <div id="ep-pct">0%</div>
     <div id="ep-wrap"><div id="ep-fill"></div></div>
     <div id="ep-stat" style="margin-top:6px;"></div>
     <a id="exp-dl" download style="display:none;width:100%;margin-top:10px;padding:12px;background:var(--grn);color:#fff;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;text-decoration:none;text-align:center;">⬇ ดาวน์โหลดวิดีโอที่รวมแล้ว</a>
@@ -940,6 +942,5 @@ canvas#ruler-c{display:block;cursor:ew-resize;user-select:none;}
 <script src="ffmpeg.min.js"></script>
 <script src="ffmpeg-core.js"></script>
 <script src="editor.js"></script>
-<script src="native-bridge.js"></script>
 </body>
 </html>
