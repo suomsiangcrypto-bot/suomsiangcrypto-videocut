@@ -21,20 +21,22 @@ bgAudio.preload = 'auto';
 var bgAudioCid = null; // cid ของ audio clip ที่โหลดอยู่
 
 function getBgAudioClip(overrideGT){
-  // หา audio clip ที่ควรเล่นตาม globalTime
+  // หา audio clip ที่ควรเล่นตาม globalTime — เลือก "เพลงที่เริ่มล่าสุด" ที่ครอบเวลานี้
+  // (กันกรณีเพลงก่อนหน้ายาวทับเพลงใหม่ → ต้องสลับเป็นเพลงใหม่)
   var ps = pxSec();
   var globalTime = (overrideGT !== undefined) ? overrideGT : ((window.playQueueOffset||0) + (vid.currentTime||0));
   var keys = Object.keys(S.clips);
+  var best = null, bestStart = -1;
   for(var i=0;i<keys.length;i++){
     var c = S.clips[keys[i]];
     if(c.type !== 'audio') continue;
     var startSec = (c.startSec !== undefined) ? c.startSec : (c.left/ps);
     var endSec   = startSec + c.dur;
     if(globalTime >= startSec - 0.1 && globalTime < endSec){
-      return {c:c, cid:keys[i], startSec:startSec};
+      if(startSec > bestStart){ bestStart = startSec; best = {c:c, cid:keys[i], startSec:startSec}; }
     }
   }
-  return null;
+  return best;
 }
 
 // _vidTransitioning: flag กันเสียงสะดุดตอนโหลด vid.src ใหม่
@@ -531,6 +533,22 @@ function renderML(){
       if(ev.target.dataset.a==='add'){ addClipTL(e); showToast('➕ เพิ่ม '+e.name+' ในไทม์ไลน์'); }
       if(ev.target.dataset.a==='del') removeFile(e.id);
     });
+    // เอาเมาส์ชี้เพลง → เล่นตัวอย่างให้รู้ว่าเพลงอะไร
+    if(e.type==='audio'){
+      d.addEventListener('mouseenter',function(){
+        try{
+          if(!window._mlHoverAudio){ window._mlHoverAudio=new Audio(); }
+          var ha=window._mlHoverAudio;
+          ha.pause(); ha.src=e.url; ha.currentTime=0; ha.volume=0.85;
+          var p=ha.play(); if(p&&p.catch) p.catch(function(){});
+          d.classList.add('ml-prev');
+        }catch(_){}
+      });
+      d.addEventListener('mouseleave',function(){
+        try{ if(window._mlHoverAudio){ window._mlHoverAudio.pause(); window._mlHoverAudio.currentTime=0; } }catch(_){}
+        d.classList.remove('ml-prev');
+      });
+    }
 
     // ลากเพื่อสลับลำดับใน media list
     d.addEventListener('dragstart',function(ev){
@@ -3068,8 +3086,10 @@ async function _runOnePass(queue, tw, th, crf, ear, waves, musicArr){
       var mname='op_music_'+mmi+'.'+((me.file.name.split('.').pop()||'mp3').toLowerCase());
       await ffWrite(mname, me.file);
       var mstart=(mc.startSec!==undefined)?mc.startSec:(mc.left/psOP);
-      musicList.push({name:mname, startMs:Math.max(0,Math.round(mstart*1000))});
+      musicList.push({name:mname, startMs:Math.max(0,Math.round(mstart*1000)), startSec:mstart});
     }
+    // ให้แต่ละเพลงหยุดเมื่อเพลงถัดไปเริ่ม (เล่นต่อเนื่องไม่ทับกัน)
+    for(var ti=0; ti<musicList.length-1; ti++){ if(musicList[ti+1].startSec>musicList[ti].startSec) musicList[ti].trimTo=musicList[ti+1].startSec; }
   }
   // inputs: คลิปวิดีโอ
   meta.forEach(function(m){
@@ -3101,7 +3121,7 @@ async function _runOnePass(queue, tw, th, crf, ear, waves, musicArr){
   if(musicList.length){
     var amixL=['[acat]'];
     musicList.forEach(function(m,mi){
-      fc.push('['+(musBaseIdx+mi)+':a]adelay='+m.startMs+'|'+m.startMs+',volume=0.9,asetpts=PTS-STARTPTS[bgm'+mi+']');
+      fc.push('['+(musBaseIdx+mi)+':a]adelay='+m.startMs+'|'+m.startMs+(m.trimTo?',atrim=0:'+m.trimTo.toFixed(3):'')+',volume=0.9,asetpts=PTS-STARTPTS[bgm'+mi+']');
       amixL.push('[bgm'+mi+']');
     });
     var nM=amixL.length;
@@ -3510,7 +3530,10 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           mixIn.push('-i', afn);
           var aStart=(ac.startSec!==undefined)?ac.startSec:(ac.left/ps0M);
           var aMs=Math.max(0, Math.round(aStart*1000));
-          fcM.push('['+inNo+':a]adelay='+aMs+'|'+aMs+',volume=0.9[bg'+mi+']');
+          var _nextAc=audioClips[mi+1];
+          var _nextStart=_nextAc?((_nextAc.startSec!==undefined)?_nextAc.startSec:(_nextAc.left/ps0M)):null;
+          var _trimF=(_nextStart!==null && _nextStart>aStart)?(',atrim=0:'+_nextStart.toFixed(3)):'';
+          fcM.push('['+inNo+':a]adelay='+aMs+'|'+aMs+_trimF+',volume=0.9[bg'+mi+']');
           amixLabels.push('[bg'+mi+']'); inNo++;
         }
         var nMix=amixLabels.length, parts=[];
