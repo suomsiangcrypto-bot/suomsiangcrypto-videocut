@@ -25,6 +25,8 @@ function getBgAudioClip(overrideGT){
   // (กันกรณีเพลงก่อนหน้ายาวทับเพลงใหม่ → ต้องสลับเป็นเพลงใหม่)
   var ps = pxSec();
   var globalTime = (overrideGT !== undefined) ? overrideGT : ((window.playQueueOffset||0) + (vid.currentTime||0));
+  // เลยจุดจบงาน (ปลายคลิปวิดีโอ) → ไม่มีเพลงเล่น
+  if(typeof calcTotalDur==='function'){ var _td=calcTotalDur(); if(_td>0 && globalTime >= _td - 0.02) return null; }
   var keys = Object.keys(S.clips);
   var best = null, bestStart = -1;
   for(var i=0;i<keys.length;i++){
@@ -1980,11 +1982,11 @@ function syncTextToPlayhead(){
   updateTextVisibility(gt);
 }
 function calcTotalDur(){
+  // ความยาวงาน = ปลายคลิปที่ไกลสุด รวมเพลง (ตามความกว้างที่ผู้ใช้ตัด ไม่ใช่ความยาวไฟล์)
   var max=0, ps=pxSec();
   Object.values(S.clips).forEach(function(c){
     var start=(c.startSec!==undefined)?c.startSec:(c.left/ps);
-    var dur=c.w/ps; // ขนาด clip จริงหลัง trim ไม่ใช่ความยาวไฟล์
-    var r=start+dur;
+    var r=start+(c.w/ps); // ขนาด clip จริงหลัง trim
     if(r>max)max=r;
   });
   return max||0;
@@ -1997,44 +1999,32 @@ function advanceClip(){
     playIdx++; playQueueOffset=clipStartTime(playIdx);
     loadAndPlay(playQueue[playIdx],false); return;
   }
-  // วิดีโอจบ — เช็คว่าเสียงยังเล่นอยู่ไหม
-  if(!bgAudio.paused && bgAudio.currentTime<(bgAudio.duration||0)-0.2){
-    // แช่ vid ไว้ที่ frame สุดท้าย รอเสียงจบ
+  // วิดีโอจบ — ถ้ายังมีเพลง/คอนเทนต์เลยปลายวิดีโอ ให้เล่นต่อ (แช่เฟรมสุดท้าย) จนจบเพลงสุดท้าย
+  var ps2=pxSec();
+  var vidEndGT=playQueueOffset+(vid.duration||0);
+  var _tdNow=calcTotalDur();
+  if(_tdNow > vidEndGT + 0.12){
     vid.pause();
     cancelAnimationFrame(transAnim);
     tctx.clearRect(0,0,transCanvas.width,transCanvas.height);
-    var vidEndGT=playQueueOffset+(vid.duration||0);
-    var ps2=pxSec();
-    // หา startSec ของ audio clip
-    var aFound=null;
-    Object.values(S.clips).forEach(function(c){
-      if(c.type!=='audio')return;
-      var cs=(c.startSec!==undefined)?c.startSec:(c.left/ps2);
-      if(!aFound||cs<aFound.startSec) aFound={c:c,startSec:cs};
-    });
-    // ซ่อน image overlay ทันทีที่ content จบ รอแค่เสียง
-    var _ioWait = document.getElementById('prev-img-overlay');
-    if(_ioWait) _ioWait.style.display = 'none';
-    vid.style.display = '';
-    vid.style.visibility = '';
-    function waitAudio(){
+    var _ioWait=document.getElementById('prev-img-overlay'); if(_ioWait)_ioWait.style.display='none';
+    vid.style.display=''; vid.style.visibility='';
+    var _tailFrom=vidEndGT, _tailT0=performance.now();
+    function tailLoop(){
       if(!isPlaying)return;
-      var gt=vidEndGT;
-      if(aFound){
-        gt=aFound.startSec+(bgAudio.currentTime-(aFound.c.tIn||0));
-      }
-      document.getElementById('tl-ph').style.left=(gt*ps2)+'px';
+      var gt=_tailFrom + (performance.now()-_tailT0)/1000;
       var totalDur=calcTotalDur();
+      if(gt>=totalDur){ stopAll(); return; }   // จบที่ปลายเพลงสุดท้าย
+      window._waveGlobalTime=gt;
+      syncBgAudio(gt);                          // สลับเพลงตามตำแหน่ง + เล่นต่อเนื่อง (เพลง1→เพลง2→...)
+      document.getElementById('tl-ph').style.left=(gt*ps2)+'px';
       document.getElementById('pb-tc').textContent=fmt(gt)+' / '+fmt(totalDur);
-      document.getElementById('tc-badge').textContent=fmt(gt);
-      var sc2=document.getElementById('tl-scroll'),vw2=sc2.clientWidth,phPx=gt*ps2;
-      if(phPx>sc2.scrollLeft+vw2*0.8)sc2.scrollLeft=phPx-vw2*0.3;
-      if(bgAudio.paused||bgAudio.currentTime>=(bgAudio.duration||0)-0.1||gt>=totalDur){
-        stopAll();return;
-      }
-      requestAnimationFrame(waitAudio);
+      var _tb=document.getElementById('tc-badge'); if(_tb)_tb.textContent=fmt(gt);
+      var sc2=document.getElementById('tl-scroll');
+      if(sc2){ var vw2=sc2.clientWidth, phPx=gt*ps2; if(phPx>sc2.scrollLeft+vw2*0.8)sc2.scrollLeft=phPx-vw2*0.3; }
+      requestAnimationFrame(tailLoop);
     }
-    requestAnimationFrame(waitAudio);
+    requestAnimationFrame(tailLoop);
     return;
   }
   stopAll();
@@ -3309,7 +3299,9 @@ document.getElementById('exp-go').addEventListener('click', async function(){
   var _opMusic = Object.keys(S.clips).map(function(k){return S.clips[k];}).filter(function(x){return x.type==='audio';});
   var _opAllSilent = playQueue.every(function(q){ return q.entry.type==='image' || (q.c && q.c.muted); });
   var _opCanAudio = (_opMusic.length>0) || _opAllSilent;   // ไม่งั้นเสียงคลิปจะหาย → ใช้วิธีปกติ
-  if(!isAudioOnly && _opNoText && _opWaves.length<=1 && _opCanAudio && playQueue.length<=2){
+  var _opVidLen=0; playQueue.forEach(function(q){ var cc=q.c; _opVidLen += (cc&&cc.w>0)?(cc.w/pxSec()):((q.entry&&q.entry.dur)||0); });
+  var _opNoExtend = (calcTotalDur() <= _opVidLen + 0.3);   // เพลงไม่ยาวเกินวิดีโอ (ถ้าเกินให้ multipass แช่เฟรม)
+  if(!isAudioOnly && _opNoText && _opWaves.length<=1 && _opCanAudio && playQueue.length<=2 && _opNoExtend){
     try{
       eps.textContent='⚡ ส่งออกแบบเร็ว (รวมในขั้นเดียว)...'; epf.style.width='10%';
       window.__opTotalDur = 0;
@@ -3591,16 +3583,20 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           amixLabels.push('[bg'+mi+']'); inNo++;
         }
         var nMix=amixLabels.length, parts=[];
+        var _T=calcTotalDur(), _V=_expTotal||0, _hold=Math.max(0,_T-_V);
+        // แช่เฟรมวิดีโอสุดท้ายให้ยาวเท่างาน (กรณีเพลงยาวกว่าวิดีโอ → เล่นต่อจนจบเพลง)
+        var vSrc='0:v', _vFiltered=false;
+        if(_hold>0.08){ parts.push('[0:v]tpad=stop_mode=clone:stop_duration='+_hold.toFixed(3)+'[vhold]'); vSrc='vhold'; _vFiltered=true; }
         // เสียงรวม → [aud]
-        if(nMix>1){ parts.push((fcM.length?fcM.join(';')+';':'')+amixLabels.join('')+'amix=inputs='+nMix+':duration=first:dropout_transition=0[mxa];[mxa]volume='+nMix+'[aud]'); }
-        else { parts.push('[0:a]anull[aud]'); }
+        if(nMix>1){ parts.push((fcM.length?fcM.join(';')+';':'')+amixLabels.join('')+'amix=inputs='+nMix+':duration=longest:dropout_transition=0[mxa];[mxa]volume='+nMix+'[aud]'); }
+        else { parts.push('[0:a]apad[aud]'); }
         var vMap, aMap, vCodec;
         if(_needWave){
           parts.push('[aud]asplit=2[awave][afin]');
           var Nw=_wvClips.length, waveLabels=[];
           if(Nw===1){ waveLabels=['awave']; }
           else { var so=''; for(var s0=0;s0<Nw;s0++){ so+='[aw'+s0+']'; waveLabels.push('aw'+s0); } parts.push('[awave]asplit='+Nw+so); }
-          var vCur='0:v';
+          var vCur=vSrc;
           _wvClips.forEach(function(clip,k){
             var style=WAVE_STYLES.find(function(s){return s.id===clip.styleId;})||WAVE_STYLES[0];
             var col='0x'+String(style.color||'#f5c518').replace('#','').slice(0,6);
@@ -3619,10 +3615,12 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           });
           vMap='[vout]'; aMap='[afin]'; vCodec=['-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p'];
         } else {
-          vMap='0:v'; aMap='[aud]'; vCodec=['-c:v','copy'];
+          if(_vFiltered){ vMap='['+vSrc+']'; vCodec=['-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p']; }
+          else { vMap='0:v'; vCodec=['-c:v','copy']; }
+          aMap='[aud]';
         }
         var outF='mixwave_out.mp4';
-        var mwArgs=mixIn.concat(['-filter_complex', parts.join(';'), '-map',vMap,'-map',aMap], vCodec, ['-c:a','aac','-ar','44100','-ac','2','-b:a','192k', outF]);
+        var mwArgs=mixIn.concat(['-filter_complex', parts.join(';'), '-map',vMap,'-map',aMap], vCodec, ['-c:a','aac','-ar','44100','-ac','2','-b:a','192k','-t',_T.toFixed(3), outF]);
         console.log('[mixwave] filter:', parts.join(';'));
         await ffExec(mwArgs);
         try{ clearInterval(_cwPg); }catch(e){}
