@@ -3077,6 +3077,29 @@ function _toggleWaveOverlaysForExport(hide){
 // ════════════════════════════════════════════════════════════
 // ONE-PASS EXPORT — รวม scale+concat+เพลง+waveform ใน ffmpeg คำสั่งเดียว (เร็วขึ้นเกือบเท่าตัว)
 // ════════════════════════════════════════════════════════════
+// ── ตรวจหา GPU encoder (NVENC/QSV/AMF) เพื่อส่งออกเร็วขึ้นมาก ──
+async function _detectHwEnc(){
+  if(window._hwEnc!==undefined) return window._hwEnc;
+  if(typeof ffExec!=='function'){ window._hwEnc=null; return null; }
+  var cands=['h264_nvenc','h264_qsv','h264_amf'];
+  for(var i=0;i<cands.length;i++){
+    try{
+      // เทสจริง: สเกล+เข้ารหัสคลิปจิ๋ว ถ้าผ่าน = การ์ดจอใช้ได้
+      await ffExec(['-f','lavfi','-i','color=c=black:s=128x72:d=0.2:r=10','-c:v',cands[i],'-f','null','-']);
+      window._hwEnc=cands[i]; console.log('[hwenc] ✅ ใช้ GPU:',cands[i]); return window._hwEnc;
+    }catch(e){ /* ตัวนี้ใช้ไม่ได้ ลองตัวถัดไป */ }
+  }
+  window._hwEnc=null; console.log('[hwenc] ไม่พบ GPU encoder → ใช้ CPU (libx264)');
+  return null;
+}
+function _vcodec(crf){
+  var hw=window._hwEnc;
+  if(hw==='h264_nvenc') return ['-c:v','h264_nvenc','-preset','p2','-cq',String(crf)];
+  if(hw==='h264_qsv')   return ['-c:v','h264_qsv','-global_quality',String(crf)];
+  if(hw==='h264_amf')   return ['-c:v','h264_amf','-quality','speed'];
+  return ['-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p'];
+}
+
 function _opVizFor(style, w, h, col){
   switch(style.id){
     case 'line':   return 'showwaves=s='+w+'x'+h+':mode=cline:rate=30:scale=sqrt:colors='+col;
@@ -3252,6 +3275,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
   var btn=this; btn.disabled=true; btn.textContent='⏳ กำลังโหลด FFmpeg...';
   var ok=await loadFFmpeg();
   if(!ok){ btn.disabled=false; btn.textContent='🚀 เริ่มรวมและส่งออก'; return; }
+  if(window.IS_NATIVE){ try{ await _detectHwEnc(); }catch(e){ window._hwEnc=null; } }
 
   var epw=document.getElementById('ep-wrap'); epw.style.display='block';
   var epf=document.getElementById('ep-fill'); epf.style.width='0';
@@ -3449,7 +3473,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           }
 
           args.push('-vf', vf);
-          args.push('-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p');
+          args.push.apply(args, _vcodec(crf));
           if(c.muted){
             // ปิดเสียง: ใส่เสียงเงียบแทน (ปุ่มปิดลำโพงต่อคลิป) — ยังคงมีสตรีมเสียง
             args.push('-map','0:v:0','-map','1:a','-c:a','aac','-ar','44100','-ac','2','-b:a','128k','-shortest');
@@ -3501,6 +3525,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           segData = _ffmpegLib.FS('readFile', segN);
         }catch(encErr){
           _lastErr = (encErr&&encErr.message) ? String(encErr.message) : String(encErr);
+          if(_att===0 && window._hwEnc){ window._hwEnc=null; console.warn('[hwenc] segment GPU fail → ปิด GPU ใช้ CPU แทน'); }
           console.warn('[encode] attempt '+_att+' fail ('+entry.name+'):', _lastErr);
           segData=null;
         }
@@ -3616,7 +3641,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
             if(Nw>1){ var st=Math.max(0,clip.startSec||0).toFixed(2); var en=((clip.startSec||0)+(clip.dur||5)).toFixed(2); ovl+=":enable='between(t\\,"+st+"\\,"+en+")'"; }
             ovl+='['+nextV+']'; parts.push(ovl); vCur=nextV;
           });
-          vMap='[vout]'; aMap='[afin]'; vCodec=['-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p'];
+          vMap='[vout]'; aMap='[afin]'; vCodec=_vcodec(crf);
         } else {
           vMap='0:v'; aMap='[aud]'; vCodec=['-c:v','copy'];
         }
@@ -3633,6 +3658,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
       } catch(mwErr){
         try{ clearInterval(_cwPg); }catch(e){}
         if(window._exportCancel || window._exportRunId!==myRun) throw mwErr;
+        window._hwEnc=null;   // ปิด GPU ที่อาจมีปัญหา → ใช้ CPU กับขั้นถัดไป
         console.warn('[mixwave] รวม mix+wave ล้มเหลว → ลอง mix เพลงอย่างเดียว:', mwErr && mwErr.message);
         // สำรอง: mix เพลงล้วน (ไม่มี waveform) เพื่อไม่ให้เสียงหาย
         try{
@@ -4059,8 +4085,8 @@ function showToast(msg){var t=document.getElementById('toast');t.textContent=msg
 
 // INIT
 drawRuler();
-// ตรวจว่าเปิดจาก file:// หรือไม่
-if(window.location.protocol==='file:'){
+// ตรวจว่าเปิดจาก file:// แบบเบราว์เซอร์ล้วน (ไม่ใช่ Electron native ที่ export ได้)
+if(window.location.protocol==='file:' && !window.IS_NATIVE && !window.ffNative){
   var lw=document.getElementById('localhost-warn');
   if(lw){
     lw.style.display='flex';
