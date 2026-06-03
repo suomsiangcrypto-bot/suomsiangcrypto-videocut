@@ -3084,8 +3084,8 @@ async function _detectHwEnc(){
   var cands=['h264_nvenc','h264_qsv','h264_amf'];
   for(var i=0;i<cands.length;i++){
     try{
-      // เทสจริง: สเกล+เข้ารหัสคลิปจิ๋ว ถ้าผ่าน = การ์ดจอใช้ได้
-      await ffExec(['-f','lavfi','-i','color=c=black:s=128x72:d=0.2:r=10','-c:v',cands[i],'-f','null','-']);
+      // เทสจริง: สเกล+เข้ารหัสคลิป (ใช้ 640x360 — ใหญ่พอผ่านขั้นต่ำของ NVENC/QSV/AMF)
+      await ffExec(['-f','lavfi','-i','color=c=black:s=640x360:d=0.3:r=15','-c:v',cands[i],'-f','null','-']);
       window._hwEnc=cands[i]; console.log('[hwenc] ✅ ใช้ GPU:',cands[i]); return window._hwEnc;
     }catch(e){ /* ตัวนี้ใช้ไม่ได้ ลองตัวถัดไป */ }
   }
@@ -4019,7 +4019,7 @@ async function ffExec(args){
   console.log('[ffExec] running:', args.join(' '));
   var timeoutId;
   var timeoutP = new Promise(function(_,rej){
-    timeoutId = setTimeout(function(){ rej(new Error('FFmpeg timeout (5 นาที) — วิดีโออาจใหญ่เกินไป')); }, 300000);
+    timeoutId = setTimeout(function(){ rej(new Error('FFmpeg timeout (30 นาที) — วิดีโอใหญ่มาก ลองลดเป็น 480p')); }, 1800000);
   });
   try{
     await Promise.race([ _ffmpegLib.run.apply(_ffmpegLib, args), timeoutP ]);
