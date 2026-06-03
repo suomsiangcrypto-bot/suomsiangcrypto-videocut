@@ -3058,11 +3058,18 @@ async function _runOnePass(queue, tw, th, crf, ear, waves, musicArr){
     meta.push({nm:nm, tin:tin, dur:dur, img:img, hasA:hasA});
   }
   window.__opTotalDur = totalDur;
-  // เพลง (ถ้ามี)
-  var musicName=null, musicStart=0, hasMusic=false;
+  // เพลงทั้งหมด (เรียงตามตำแหน่งบนไทม์ไลน์)
+  var musicList=[];
   if(musicArr && musicArr.length){
-    var mc=musicArr[0], me=S.files.find(function(f){return f.id===mc.fid;});
-    if(me){ musicName='op_music.'+((me.file.name.split('.').pop()||'mp3').toLowerCase()); await ffWrite(musicName, me.file); musicStart=(mc.startSec!==undefined)?mc.startSec:(mc.left/psOP); hasMusic=true; }
+    var sortedM=musicArr.slice().sort(function(a,b){ var sa=(a.startSec!==undefined?a.startSec:a.left/psOP), sb=(b.startSec!==undefined?b.startSec:b.left/psOP); return sa-sb; });
+    for(var mmi=0; mmi<sortedM.length; mmi++){
+      var mc=sortedM[mmi], me=S.files.find(function(f){return f.id===mc.fid;});
+      if(!me) continue;
+      var mname='op_music_'+mmi+'.'+((me.file.name.split('.').pop()||'mp3').toLowerCase());
+      await ffWrite(mname, me.file);
+      var mstart=(mc.startSec!==undefined)?mc.startSec:(mc.left/psOP);
+      musicList.push({name:mname, startMs:Math.max(0,Math.round(mstart*1000))});
+    }
   }
   // inputs: คลิปวิดีโอ
   meta.forEach(function(m){
@@ -3070,10 +3077,11 @@ async function _runOnePass(queue, tw, th, crf, ear, waves, musicArr){
     if(!m.img && m.tin>0.05) inArgs.push('-ss', m.tin.toFixed(3));
     inArgs.push('-t', m.dur.toFixed(3), '-i', m.nm);
   });
-  // input: เพลง
-  var musIdx=-1; if(hasMusic){ musIdx=meta.length; inArgs.push('-i', musicName); }
-  // input: เสียงเงียบหนึ่งตัวต่อคลิปที่ไม่มีเสียง (กัน concat พัง)
-  var nextIdx = meta.length + (hasMusic?1:0);
+  // inputs: เพลงทุกเพลง
+  var musBaseIdx = meta.length;
+  musicList.forEach(function(m){ inArgs.push('-i', m.name); });
+  // inputs: เสียงเงียบต่อคลิปที่ไม่มีเสียง (กัน concat พัง)
+  var nextIdx = meta.length + musicList.length;
   meta.forEach(function(m){
     if(!m.hasA){ m.silIdx = nextIdx++; inArgs.push('-f','lavfi','-t', m.dur.toFixed(3), '-i','anullsrc=channel_layout=stereo:sample_rate=44100'); }
   });
@@ -3089,11 +3097,15 @@ async function _runOnePass(queue, tw, th, crf, ear, waves, musicArr){
     cat+='[opv'+idx+'][opa'+idx+']';
   });
   fc.push(cat+'concat=n='+N+':v=1:a=1[vcat][acat]');
-  // เสียง: ผสมเพลง (ถ้ามี) เข้ากับเสียงคลิป
-  if(hasMusic){
-    var ms=Math.max(0,Math.round(musicStart*1000));
-    fc.push('['+musIdx+':a]adelay='+ms+'|'+ms+',volume=0.85,asetpts=PTS-STARTPTS[bgm]');
-    fc.push('[acat][bgm]amix=inputs=2:duration=first:dropout_transition=0[mxa];[mxa]volume=2.0[amx]');
+  // เสียง: ผสมทุกเพลงเข้ากับเสียงคลิป (เพลงต่อเพลงตามตำแหน่ง)
+  if(musicList.length){
+    var amixL=['[acat]'];
+    musicList.forEach(function(m,mi){
+      fc.push('['+(musBaseIdx+mi)+':a]adelay='+m.startMs+'|'+m.startMs+',volume=0.9,asetpts=PTS-STARTPTS[bgm'+mi+']');
+      amixL.push('[bgm'+mi+']');
+    });
+    var nM=amixL.length;
+    fc.push(amixL.join('')+'amix=inputs='+nM+':duration=first:dropout_transition=0[mxa];[mxa]volume='+nM+'[amx]');
   } else {
     fc.push('[acat]anull[amx]');
   }
@@ -3128,7 +3140,7 @@ async function _runOnePass(queue, tw, th, crf, ear, waves, musicArr){
   await ffExec(args);
   var r=_ffmpegLib.FS('readFile','op_out.mp4');
   meta.forEach(function(m){ try{ffDel(m.nm);}catch(e){} });
-  if(musicName) try{ffDel(musicName);}catch(e){}
+  musicList.forEach(function(m){ try{ffDel(m.name);}catch(e){} });
   try{ffDel('op_out.mp4');}catch(e){}
   if(!r || r.length<10000) throw new Error('one-pass ได้ไฟล์ว่าง/เล็กผิดปกติ');
   return r.buffer;
@@ -3469,47 +3481,83 @@ document.getElementById('exp-go').addEventListener('click', async function(){
 
     eps.textContent='📦 เตรียมไฟล์ดาวน์โหลด...';
     epf.style.width='95%';
-    // Mix bgAudio (เพลงใน tr-a) ลงวิดีโอถ้ามี
-    var audioClips = Object.values(S.clips).filter(function(c){ return c.type==='audio'; });
-    if(audioClips.length > 0 && finalBuf){
+    // ══ MIX เพลง + WAVEFORM ในคำสั่งเดียว ══
+    //    showfreqs อ่านเสียงที่ผสมเพลงแล้วโดยตรง → เส้นเสียงเต้นตามเพลงเสมอ (ตรงกับพรีวิว) + encode รอบเดียว (เร็วขึ้น)
+    var ps0M = pxSec();
+    var audioClips = Object.values(S.clips).filter(function(c){ return c.type==='audio'; })
+      .sort(function(a,b){ var sa=(a.startSec!==undefined?a.startSec:a.left/ps0M), sb=(b.startSec!==undefined?b.startSec:b.left/ps0M); return sa-sb; });
+    var _wvClips = window.S_WAVES || [];
+    var _anyUnmutedVid = playQueue.some(function(q){ return q.entry.type!=='image' && !(q.c && q.c.muted); });
+    var _needWave = _wvClips.length>0 && !isAudioOnly && (audioClips.length>0 || _anyUnmutedVid);
+    var _waveDone = false;
+    if((audioClips.length>0 || _needWave) && finalBuf){
+      var _cwPg = null;
       try{
-        eps.textContent='🎵 Mix เสียงเพลง...'; epf.style.width='92%';
-        // หา audio entry ตัวแรก
-        var aClip = audioClips[0];
-        var aEntry = S.files.find(function(f){ return f.id===aClip.fid; });
-        if(aEntry){
-          var aFileName = 'bgaudio_mix.'+aEntry.name.split('.').pop();
-          var mixFinal = 'mix_final.mp4';
-          // เขียน video final ลง FS
-          _ffmpegLib.FS('writeFile', 'vid_premix.mp4', new Uint8Array(finalBuf));
-          // เขียน audio file ลง FS
-          await ffWrite(aFileName, aEntry.file);
-          // calc audio offset (startSec ของ audio clip)
-          var ps0 = pxSec();
-          var aStart = (aClip.startSec!==undefined) ? aClip.startSec : (aClip.left/ps0);
-          var aMs = Math.max(0, Math.round(aStart*1000));
-          // amix: เสียงต้นฉบับวิดีโอ (0:a) + เพลง (1:a เลื่อนเริ่มตาม startSec) อยู่ด้วยกัน
-          var mixArgs = [
-            '-i','vid_premix.mp4',
-            '-i', aFileName,
-            '-filter_complex',
-            '[1:a]adelay='+aMs+'|'+aMs+',volume=0.85[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0[mx];[mx]volume=2.0[aout]',
-            '-map','0:v:0','-map','[aout]',
-            '-c:v','copy','-c:a','aac','-b:a','192k',
-            mixFinal
-          ];
-          await ffExec(mixArgs);
-          var mixResult = _ffmpegLib.FS('readFile', mixFinal);
-          if(mixResult && mixResult.length > 1000){
-            finalBuf = mixResult.buffer;
-            console.log('[mix] bgAudio mixed OK, size:', mixResult.length);
-          }
-          try{ _ffmpegLib.FS('unlink','vid_premix.mp4'); }catch(e){}
-          try{ _ffmpegLib.FS('unlink', aFileName); }catch(e){}
-          try{ _ffmpegLib.FS('unlink', mixFinal); }catch(e){}
+        eps.textContent = _needWave ? '🎵〰️ ผสมเพลง + สร้างเส้นเสียง...' : '🎵 Mix เสียงเพลง...'; epf.style.width='84%';
+        window.__opTotalDur = _expTotal;
+        _cwPg = setInterval(function(){
+          try{ var t=(window.ffNative&&window.ffNative.getProgress)?window.ffNative.getProgress():0;
+            if(_expTotal>0 && t>0){ epf.style.width=Math.min(98, 82+Math.round(t/_expTotal*16))+'%'; eps.textContent=(_needWave?'🎵〰️ เพลง+เส้นเสียง... ':'🎵 Mix เพลง... ')+t.toFixed(0)+'/'+_expTotal.toFixed(0)+' วิ'; }
+          }catch(e){}
+        }, 400);
+        _ffmpegLib.FS('writeFile','vid_premix.mp4', new Uint8Array(finalBuf));
+        var mixIn=['-i','vid_premix.mp4'], fcM=[], amixLabels=['[0:a]'], inNo=1, written=[];
+        for(var mi=0; mi<audioClips.length; mi++){
+          var ac=audioClips[mi], ae=S.files.find(function(f){ return f.id===ac.fid; });
+          if(!ae) continue;
+          var afn='bgmix_'+mi+'.'+((ae.name.split('.').pop()||'mp3').toLowerCase());
+          await ffWrite(afn, ae.file); written.push(afn);
+          mixIn.push('-i', afn);
+          var aStart=(ac.startSec!==undefined)?ac.startSec:(ac.left/ps0M);
+          var aMs=Math.max(0, Math.round(aStart*1000));
+          fcM.push('['+inNo+':a]adelay='+aMs+'|'+aMs+',volume=0.9[bg'+mi+']');
+          amixLabels.push('[bg'+mi+']'); inNo++;
         }
-      } catch(mixErr){
-        console.warn('[mix] bgAudio mix failed, using original:', mixErr.message);
+        var nMix=amixLabels.length, parts=[];
+        // เสียงรวม → [aud]
+        if(nMix>1){ parts.push((fcM.length?fcM.join(';')+';':'')+amixLabels.join('')+'amix=inputs='+nMix+':duration=first:dropout_transition=0[mxa];[mxa]volume='+nMix+'[aud]'); }
+        else { parts.push('[0:a]anull[aud]'); }
+        var vMap, aMap, vCodec;
+        if(_needWave){
+          parts.push('[aud]asplit=2[awave][afin]');
+          var Nw=_wvClips.length, waveLabels=[];
+          if(Nw===1){ waveLabels=['awave']; }
+          else { var so=''; for(var s0=0;s0<Nw;s0++){ so+='[aw'+s0+']'; waveLabels.push('aw'+s0); } parts.push('[awave]asplit='+Nw+so); }
+          var vCur='0:v';
+          _wvClips.forEach(function(clip,k){
+            var style=WAVE_STYLES.find(function(s){return s.id===clip.styleId;})||WAVE_STYLES[0];
+            var col='0x'+String(style.color||'#f5c518').replace('#','').slice(0,6);
+            var px=clip.pvX!==undefined?clip.pvX:5, py=clip.pvY!==undefined?clip.pvY:75;
+            var pw=clip.pvW!==undefined?clip.pvW:90, ph=clip.pvH!==undefined?clip.pvH:15;
+            var x=Math.max(0,Math.round(px/100*tw)), y=Math.max(0,Math.round(py/100*th));
+            var w=Math.round(pw/100*tw), h=Math.round(ph/100*th);
+            if(w<8)w=8; if(h<8)h=8; if(w%2)w--; if(h%2)h--;
+            var sens=clip.sensitivity!==undefined?Math.max(0.3,Math.min(3,clip.sensitivity)):1.0;
+            var viz=_opVizFor(style,w,h,col);
+            parts.push('['+waveLabels[k]+']volume='+sens.toFixed(2)+','+viz+',format=rgba,colorkey=0x000000:0.12:0.07,fps=20[wv'+k+']');
+            var nextV=(k===Nw-1)?'vout':('vt'+k);
+            var ovl='['+vCur+'][wv'+k+']overlay=x='+x+':y='+y;
+            if(Nw>1){ var st=Math.max(0,clip.startSec||0).toFixed(2); var en=((clip.startSec||0)+(clip.dur||5)).toFixed(2); ovl+=":enable='between(t\\,"+st+"\\,"+en+")'"; }
+            ovl+='['+nextV+']'; parts.push(ovl); vCur=nextV;
+          });
+          vMap='[vout]'; aMap='[afin]'; vCodec=['-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p'];
+        } else {
+          vMap='0:v'; aMap='[aud]'; vCodec=['-c:v','copy'];
+        }
+        var outF='mixwave_out.mp4';
+        var mwArgs=mixIn.concat(['-filter_complex', parts.join(';'), '-map',vMap,'-map',aMap], vCodec, ['-c:a','aac','-ar','44100','-ac','2','-b:a','192k', outF]);
+        console.log('[mixwave] filter:', parts.join(';'));
+        await ffExec(mwArgs);
+        try{ clearInterval(_cwPg); }catch(e){}
+        var rr=_ffmpegLib.FS('readFile', outF);
+        if(rr && rr.length>10000){ finalBuf=rr.buffer; if(_needWave) _waveDone=true; console.log('[mixwave] OK '+(nMix-1)+' เพลง, wave='+_needWave+', size:', rr.length); }
+        try{ ffDel('vid_premix.mp4'); }catch(e){}
+        written.forEach(function(w){ try{ffDel(w);}catch(e){} });
+        try{ ffDel(outF); }catch(e){}
+      } catch(mwErr){
+        try{ clearInterval(_cwPg); }catch(e){}
+        if(window._exportCancel || window._exportRunId!==myRun) throw mwErr;
+        console.warn('[mixwave] รวม mix+wave ล้มเหลว → ใช้วิธีแยก:', mwErr && mwErr.message);
       }
     }
 
@@ -3535,7 +3583,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
     // ══ WAVEFORM (ffmpeg showfreqs/showwaves เนทีฟ — เร็ว ไม่วาด canvas ทีละเฟรม จึงไม่ค้าง) ══
     //    รันเสมอเมื่อมีคลิป waveform (ไม่ว่าจะ burn ตัวหนังสือ/โลโก้ ก่อนหน้าสำเร็จหรือไม่)
     var waves = window.S_WAVES || [];
-    if(waves.length > 0 && finalBuf && !isAudioOnly){
+    if(!_waveDone && waves.length > 0 && finalBuf && !isAudioOnly){
       // ตรวจว่ามีสตรีมเสียงในไฟล์ final หรือไม่ (จำเป็นสำหรับ showfreqs)
       var _anyUnmutedVid = playQueue.some(function(q){ return q.entry.type!=='image' && !(q.c && q.c.muted); });
       var _hasBgAudio = Object.values(S.clips).some(function(cc){ return cc.type==='audio'; });
