@@ -3017,6 +3017,122 @@ function _toggleWaveOverlaysForExport(hide){
     }
   });
 }
+// ════════════════════════════════════════════════════════════
+// ONE-PASS EXPORT — รวม scale+concat+เพลง+waveform ใน ffmpeg คำสั่งเดียว (เร็วขึ้นเกือบเท่าตัว)
+// ════════════════════════════════════════════════════════════
+function _opVizFor(style, w, h, col){
+  switch(style.id){
+    case 'line':   return 'showwaves=s='+w+'x'+h+':mode=cline:rate=30:scale=sqrt:colors='+col;
+    case 'neon':   return 'showwaves=s='+w+'x'+h+':mode=line:rate=30:scale=sqrt:colors='+col;
+    case 'mirror':
+    case 'wave':   return 'showwaves=s='+w+'x'+h+':mode=p2p:rate=30:scale=sqrt:colors='+col;
+    case 'spikes': return 'showwaves=s='+w+'x'+h+':mode=p2p:rate=30:scale=lin:colors='+col;
+    case 'dots':   return 'showfreqs=s='+w+'x'+h+':mode=dot:ascale=cbrt:fscale=log:colors='+col;
+    case 'rainbow':return 'showfreqs=s='+w+'x'+h+':mode=bar:ascale=cbrt:fscale=log:colors=0xff0000|0xffff00|0x00ff00|0x00ffff|0x0000ff';
+    default:       return 'showfreqs=s='+w+'x'+h+':mode=bar:ascale=cbrt:fscale=log:colors='+col;
+  }
+}
+
+async function _opProbeAudio(name){
+  try{ await ffExec(['-i', name]); return false; }      // ไม่มี output → ffmpeg error เสมอ
+  catch(e){ return /Audio:/i.test((e && e.message) || ''); }  // มี "Audio:" ใน log = มีเสียง
+}
+
+async function _runOnePass(queue, tw, th, crf, ear, waves, musicArr){
+  var FPS = parseInt((document.getElementById('exp-fps')&&document.getElementById('exp-fps').value)||30)||30;
+  var psOP = pxSec();
+  var inArgs=[], meta=[], totalDur=0;
+  for(var qi=0; qi<queue.length; qi++){
+    var q=queue[qi], cc=q.c, en=q.entry;
+    var ext=(en.file.name.split('.').pop()||'mp4').toLowerCase();
+    var nm='op_'+qi+'.'+ext;
+    await ffWrite(nm, en.file);
+    var tin=(cc.tIn!==undefined)?cc.tIn:0, tout=(cc.tOut!==undefined)?cc.tOut:en.dur;
+    var tfpx=en.dur*psOP;
+    if(tin===0 && tout===en.dur && cc.w < tfpx-1){ tout=Math.min(en.dur, tin+en.dur*(cc.w/tfpx)); }
+    var dur=Math.max(0.1, tout-tin);
+    totalDur+=dur;
+    var img=(en.type==='image');
+    // เช็คว่าคลิปมีเสียงต้นฉบับไหม (เก็บไว้ถ้ามีและไม่ได้ปิดเสียง)
+    var hasA = (!img && !cc.muted) ? await _opProbeAudio(nm) : false;
+    meta.push({nm:nm, tin:tin, dur:dur, img:img, hasA:hasA});
+  }
+  // เพลง (ถ้ามี)
+  var musicName=null, musicStart=0, hasMusic=false;
+  if(musicArr && musicArr.length){
+    var mc=musicArr[0], me=S.files.find(function(f){return f.id===mc.fid;});
+    if(me){ musicName='op_music.'+((me.file.name.split('.').pop()||'mp3').toLowerCase()); await ffWrite(musicName, me.file); musicStart=(mc.startSec!==undefined)?mc.startSec:(mc.left/psOP); hasMusic=true; }
+  }
+  // inputs: คลิปวิดีโอ
+  meta.forEach(function(m){
+    if(m.img) inArgs.push('-loop','1');
+    if(!m.img && m.tin>0.05) inArgs.push('-ss', m.tin.toFixed(3));
+    inArgs.push('-t', m.dur.toFixed(3), '-i', m.nm);
+  });
+  // input: เพลง
+  var musIdx=-1; if(hasMusic){ musIdx=meta.length; inArgs.push('-i', musicName); }
+  // input: เสียงเงียบหนึ่งตัวต่อคลิปที่ไม่มีเสียง (กัน concat พัง)
+  var nextIdx = meta.length + (hasMusic?1:0);
+  meta.forEach(function(m){
+    if(!m.hasA){ m.silIdx = nextIdx++; inArgs.push('-f','lavfi','-t', m.dur.toFixed(3), '-i','anullsrc=channel_layout=stereo:sample_rate=44100'); }
+  });
+  // vf ต่อคลิป (สเกลเท่ากันเพื่อ concat)
+  var vf = (ear==='9:16'||ear==='1:1'||ear==='4:3'||ear==='4:5')
+    ? 'scale='+tw+':'+th+':force_original_aspect_ratio=increase,crop='+tw+':'+th+',setsar=1,fps='+FPS+',format=yuv420p'
+    : 'scale='+tw+':'+th+':force_original_aspect_ratio=decrease,pad='+tw+':'+th+':(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps='+FPS+',format=yuv420p';
+  var fc=[], N=meta.length, cat='';
+  meta.forEach(function(m,idx){
+    fc.push('['+idx+':v]'+vf+'[opv'+idx+']');
+    if(m.hasA){ fc.push('['+idx+':a]aresample=44100,atrim=0:'+m.dur.toFixed(3)+',asetpts=PTS-STARTPTS[opa'+idx+']'); }
+    else      { fc.push('['+m.silIdx+':a]atrim=0:'+m.dur.toFixed(3)+',asetpts=PTS-STARTPTS[opa'+idx+']'); }
+    cat+='[opv'+idx+'][opa'+idx+']';
+  });
+  fc.push(cat+'concat=n='+N+':v=1:a=1[vcat][acat]');
+  // เสียง: ผสมเพลง (ถ้ามี) เข้ากับเสียงคลิป
+  if(hasMusic){
+    var ms=Math.max(0,Math.round(musicStart*1000));
+    fc.push('['+musIdx+':a]adelay='+ms+'|'+ms+',volume=0.85,asetpts=PTS-STARTPTS[bgm]');
+    fc.push('[acat][bgm]amix=inputs=2:duration=shortest:dropout_transition=0[mxa];[mxa]volume=2.0[amx]');
+  } else {
+    fc.push('[acat]anull[amx]');
+  }
+  // waveform (1 คลิป)
+  var vLabel='vcat', aOut='amx';
+  if(waves && waves.length===1){
+    var clip=waves[0];
+    var style=WAVE_STYLES.find(function(s){return s.id===clip.styleId;})||WAVE_STYLES[0];
+    var col='0x'+String(style.color||'#f5c518').replace('#','').slice(0,6);
+    var px=clip.pvX!==undefined?clip.pvX:5, py=clip.pvY!==undefined?clip.pvY:75;
+    var pw=clip.pvW!==undefined?clip.pvW:90, ph=clip.pvH!==undefined?clip.pvH:15;
+    var wx=Math.max(0,Math.round(px/100*tw)), wy=Math.max(0,Math.round(py/100*th));
+    var ww=Math.round(pw/100*tw), wh=Math.round(ph/100*th);
+    if(ww<8)ww=8; if(wh<8)wh=8; if(ww%2)ww--; if(wh%2)wh--;
+    var sens=clip.sensitivity!==undefined?Math.max(0.3,Math.min(3,clip.sensitivity)):1.0;
+    var viz=_opVizFor(style, ww, wh, col);
+    fc.push('[amx]asplit=2[aw][aout2]');
+    fc.push('[aw]volume='+sens.toFixed(2)+','+viz+',format=rgba,colorkey=0x000000:0.12:0.07,fps=20[wv]');
+    fc.push('[vcat][wv]overlay=x='+wx+':y='+wy+'[vout]');
+    vLabel='vout'; aOut='aout2';
+  }
+  var args = inArgs.concat([
+    '-filter_complex', fc.join(';'),
+    '-map','['+vLabel+']','-map','['+aOut+']',
+    '-t', totalDur.toFixed(3),
+    '-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p',
+    '-c:a','aac','-ar','44100','-ac','2','-b:a','192k',
+    'op_out.mp4'
+  ]);
+  try{ ffDel('op_out.mp4'); }catch(e){}
+  console.log('[onepass] fc:', fc.join(';'));
+  await ffExec(args);
+  var r=_ffmpegLib.FS('readFile','op_out.mp4');
+  meta.forEach(function(m){ try{ffDel(m.nm);}catch(e){} });
+  if(musicName) try{ffDel(musicName);}catch(e){}
+  try{ffDel('op_out.mp4');}catch(e){}
+  if(!r || r.length<10000) throw new Error('one-pass ได้ไฟล์ว่าง/เล็กผิดปกติ');
+  return r.buffer;
+}
+
 function openExp(){ _toggleWaveOverlaysForExport(true); document.getElementById('exp-bg').classList.add('show'); }
 document.getElementById('btn-exp').addEventListener('click',openExp);
 document.getElementById('exp-cancel').addEventListener('click',function(){
@@ -3101,6 +3217,46 @@ document.getElementById('exp-go').addEventListener('click', async function(){
   if(ear==='9:16'||ear==='4:5'){ tw=_expResH; th=_expResW; }
   else { tw=_expResW; th=_expResH; }
   if(tw%2!==0) tw--; if(th%2!==0) th--;
+
+  // ═══════════ ONE-PASS (เร็ว): ลองรวมทุกอย่างใน ffmpeg คำสั่งเดียวก่อน ═══════════
+  var _opNoText = (typeof TXT==='undefined'||!TXT.layers||!TXT.layers.length) && (typeof STK==='undefined'||!STK.items||!STK.items.length);
+  var _opWaves = (window.S_WAVES||[]);
+  var _opMusic = Object.keys(S.clips).map(function(k){return S.clips[k];}).filter(function(x){return x.type==='audio';});
+  var _opAllSilent = playQueue.every(function(q){ return q.entry.type==='image' || (q.c && q.c.muted); });
+  var _opCanAudio = (_opMusic.length>0) || _opAllSilent;   // ไม่งั้นเสียงคลิปจะหาย → ใช้วิธีปกติ
+  if(!isAudioOnly && _opNoText && _opWaves.length<=1 && _opCanAudio){
+    try{
+      eps.textContent='⚡ ส่งออกแบบเร็ว (รวมในขั้นเดียว)...'; epf.style.width='10%';
+      var _opBuf = await _runOnePass(playQueue, tw, th, crf, ear, _opWaves, _opMusic);
+      if(window._exportCancel || window._exportRunId!==myRun) throw new Error('ยกเลิกการส่งออกแล้ว');
+      if(_opBuf){
+        epf.style.width='100%';
+        var fnameOP=(document.getElementById('exp-name').value||'suomsiang')+'.'+outExt;
+        if(window.IS_NATIVE && typeof window._nativeFinalize==='function'){
+          var _npOP=await window._nativeFinalize(_opBuf, fnameOP);
+          if(_npOP){
+            if(dl) dl.style.display='none';
+            eps.innerHTML='✅ บันทึกแล้ว (โหมดเร็ว)!<br><span style="color:#22c55e;word-break:break-all;font-size:11px;">'+_npOP+'</span>'
+              +'<div style="margin-top:10px;display:flex;gap:8px;justify-content:center;">'
+              +'<button id="exp-open-file" style="background:#22c55e;color:#04210f;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:800;">▶ เปิดวิดีโอ</button>'
+              +'<button id="exp-open-dir" style="background:var(--p2);color:var(--tx);border:1px solid var(--bd2);padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:700;">📂 เปิดโฟลเดอร์</button></div>';
+            var _ofO=document.getElementById('exp-open-file'); if(_ofO)_ofO.onclick=function(){try{window.ffNative.openFile(_npOP);}catch(e){}};
+            var _odO=document.getElementById('exp-open-dir'); if(_odO)_odO.onclick=function(){try{window.ffNative.showInFolder(_npOP);}catch(e){}};
+            showToast('✅ บันทึกแล้ว (โหมดเร็ว)'); window._exporting=false; btn.disabled=false; btn.textContent='⚡ Native Export'; return;
+          }
+        }
+        var blobOP=new Blob([_opBuf],{type:'video/mp4'});
+        var aOP=document.createElement('a'); aOP.href=URL.createObjectURL(blobOP); aOP.download=fnameOP; aOP.style.display='none'; document.body.appendChild(aOP); aOP.click();
+        setTimeout(function(){try{document.body.removeChild(aOP);}catch(e){}},4000);
+        eps.textContent='✅ รวมสำเร็จ (โหมดเร็ว)! '+(blobOP.size/1024/1024).toFixed(1)+' MB';
+        window._exporting=false; btn.disabled=false; btn.textContent='⚡ Native Export'; return;
+      }
+    }catch(_opE){
+      if(window._exportCancel || window._exportRunId!==myRun) throw _opE;   // ยกเลิก → หยุด ไม่ fallback
+      console.warn('[onepass] ล้มเหลว → ใช้วิธีปกติแทน:', _opE && _opE.message);
+      eps.textContent='⚙️ สลับไปวิธีปกติ...';
+    }
+  }
 
   try{
     for(var i=0;i<playQueue.length;i++){
@@ -3418,7 +3574,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
               default:       viz='showfreqs=s='+w+'x'+h+':mode=bar:ascale=cbrt:fscale=log:colors='+col; break;
             }
             // showfreqs/showwaves วาดบนพื้นดำ → colorkey ดำให้โปร่งใส แล้ว fps คงที่
-            fcParts.push('['+aLabels[k]+']'+pre+viz+',format=rgba,colorkey=0x000000:0.12:0.07,fps=30[wv'+k+']');
+            fcParts.push('['+aLabels[k]+']'+pre+viz+',format=rgba,colorkey=0x000000:0.12:0.07,fps=20[wv'+k+']');
             var nextV = (k===N-1) ? 'vout' : ('vt'+k);
             var st = Math.max(0, clip.startSec||0).toFixed(2);
             var en = ((clip.startSec||0) + (clip.dur||5)).toFixed(2);
@@ -3444,12 +3600,15 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           var r=_ffmpegLib.FS('readFile','vwaved.mp4');
           if(r && r.length>10000){ finalBuf=r.buffer; _burnOk=true; console.log('[wave] dynamic burn OK', r.length); }
           ffDel('vwaved.mp4');
-        }catch(we){ console.warn('[wave] dynamic burn failed → fallback static:', we && we.message); }
+        }catch(we){
+          if(window._exportCancel || window._exportRunId!==myRun) throw we;  // ยกเลิก → หยุดจริง ไม่บันทึกไฟล์ไม่มี waveform
+          console.warn('[wave] dynamic burn failed → fallback static:', we && we.message);
+        }
         ffDel('vpw.mp4');
       }
 
       // Fallback: ถ้าไม่มีเสียง หรือ dynamic ล้มเหลว → วาด PNG นิ่งทับ (ยังดีกว่าไม่มี)
-      if(!_burnOk){
+      if(!_burnOk && !window._exportCancel){
         try{
           eps.textContent='〰️ Burn waveform (static)...'; epf.style.width='94%';
           var wDataUrl = buildWaveOverlayPNG(tw, th, 0, 99999);
@@ -3467,7 +3626,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
             if(r2&&r2.length>10000){ finalBuf=r2.buffer; console.log('[wave] static burn OK',r2.length); }
             ffDel('vpw.mp4'); ffDel('wov.png'); ffDel('vwaved.mp4');
           }
-        }catch(we2){ console.warn('[wave] static skip:', we2 && we2.message); }
+        }catch(we2){ if(window._exportCancel || window._exportRunId!==myRun) throw we2; console.warn('[wave] static skip:', we2 && we2.message); }
       }
     }
     var mimeMap={'mp4':'video/mp4','webm':'video/webm','mp3':'audio/mpeg','aac':'audio/aac'};
