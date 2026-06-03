@@ -3057,6 +3057,7 @@ async function _runOnePass(queue, tw, th, crf, ear, waves, musicArr){
     var hasA = (!img && !cc.muted) ? await _opProbeAudio(nm) : false;
     meta.push({nm:nm, tin:tin, dur:dur, img:img, hasA:hasA});
   }
+  window.__opTotalDur = totalDur;
   // เพลง (ถ้ามี)
   var musicName=null, musicStart=0, hasMusic=false;
   if(musicArr && musicArr.length){
@@ -3092,7 +3093,7 @@ async function _runOnePass(queue, tw, th, crf, ear, waves, musicArr){
   if(hasMusic){
     var ms=Math.max(0,Math.round(musicStart*1000));
     fc.push('['+musIdx+':a]adelay='+ms+'|'+ms+',volume=0.85,asetpts=PTS-STARTPTS[bgm]');
-    fc.push('[acat][bgm]amix=inputs=2:duration=shortest:dropout_transition=0[mxa];[mxa]volume=2.0[amx]');
+    fc.push('[acat][bgm]amix=inputs=2:duration=first:dropout_transition=0[mxa];[mxa]volume=2.0[amx]');
   } else {
     fc.push('[acat]anull[amx]');
   }
@@ -3208,6 +3209,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
   var cropMap={'9:16':'scale=ih*9/16:ih,crop=ih*9/16:ih','1:1':'crop=min(iw\\,ih):min(iw\\,ih)','4:3':'scale=iw:iw*3/4,crop=iw:iw*3/4','4:5':'scale=iw:iw*5/4,crop=iw:iw*5/4'};
 
   var allSegData = []; // เก็บ ArrayBuffer ของแต่ละ seg
+  var _expTotal = 0;   // ความยาวรวม (สำหรับ progress ตอนเผา waveform)
 
   // คำนวณ output resolution สำหรับใช้ทั่วทั้ง export
   var _expResParts = (res||'1280x720').split('x');
@@ -3224,10 +3226,20 @@ document.getElementById('exp-go').addEventListener('click', async function(){
   var _opMusic = Object.keys(S.clips).map(function(k){return S.clips[k];}).filter(function(x){return x.type==='audio';});
   var _opAllSilent = playQueue.every(function(q){ return q.entry.type==='image' || (q.c && q.c.muted); });
   var _opCanAudio = (_opMusic.length>0) || _opAllSilent;   // ไม่งั้นเสียงคลิปจะหาย → ใช้วิธีปกติ
-  if(!isAudioOnly && _opNoText && _opWaves.length<=1 && _opCanAudio){
+  if(!isAudioOnly && _opNoText && _opWaves.length<=1 && _opCanAudio && playQueue.length<=2){
     try{
       eps.textContent='⚡ ส่งออกแบบเร็ว (รวมในขั้นเดียว)...'; epf.style.width='10%';
-      var _opBuf = await _runOnePass(playQueue, tw, th, crf, ear, _opWaves, _opMusic);
+      window.__opTotalDur = 0;
+      var _opPgIv = setInterval(function(){
+        try{
+          var t=(window.ffNative&&window.ffNative.getProgress)?window.ffNative.getProgress():0;
+          var tot=window.__opTotalDur||0;
+          if(tot>0 && t>0){ epf.style.width=Math.min(96, Math.round(t/tot*90)+6)+'%'; eps.textContent='⚡ ส่งออกแบบเร็ว... '+t.toFixed(0)+'/'+tot.toFixed(0)+' วิ'; }
+        }catch(e){}
+      }, 400);
+      var _opBuf;
+      try{ _opBuf = await _runOnePass(playQueue, tw, th, crf, ear, _opWaves, _opMusic); }
+      finally{ clearInterval(_opPgIv); }
       if(window._exportCancel || window._exportRunId!==myRun) throw new Error('ยกเลิกการส่งออกแล้ว');
       if(_opBuf){
         epf.style.width='100%';
@@ -3282,6 +3294,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
         tOut = Math.min(entry.dur, tIn + entry.dur * ratio);
       }
       var clipDurSec = Math.max(0.1, tOut - tIn);
+      _expTotal += clipDurSec;
 
       // tw, th คำนวณที่ outer scope แล้ว ใช้ได้เลย
 
@@ -3532,7 +3545,14 @@ document.getElementById('exp-go').addEventListener('click', async function(){
       // ── showfreqs/showwaves ของ ffmpeg วิเคราะห์เสียงจริง → waveform เต้นตามเพลง (เร็วมาก) ──
       if(_hasAudio){
         try{
-          eps.textContent='〰️ สร้าง waveform ตามจังหวะเพลง...'; epf.style.width='94%';
+          eps.textContent='〰️ สร้าง waveform ตามจังหวะเพลง...'; epf.style.width='80%';
+          window.__opTotalDur = _expTotal;
+          var _wvPgIv = setInterval(function(){
+            try{
+              var t=(window.ffNative&&window.ffNative.getProgress)?window.ffNative.getProgress():0;
+              if(_expTotal>0 && t>0){ epf.style.width=Math.min(98, 80+Math.round(t/_expTotal*18))+'%'; eps.textContent='〰️ เผา waveform ลงวิดีโอ... '+t.toFixed(0)+'/'+_expTotal.toFixed(0)+' วิ'; }
+            }catch(e){}
+          }, 400);
           _ffmpegLib.FS('writeFile', 'vpw.mp4', new Uint8Array(finalBuf));
 
           var N = waves.length;
@@ -3597,10 +3617,12 @@ document.getElementById('exp-go').addEventListener('click', async function(){
             '-c:a','copy',
             'vwaved.mp4'
           ]);
+          try{ clearInterval(_wvPgIv); }catch(e){}
           var r=_ffmpegLib.FS('readFile','vwaved.mp4');
           if(r && r.length>10000){ finalBuf=r.buffer; _burnOk=true; console.log('[wave] dynamic burn OK', r.length); }
           ffDel('vwaved.mp4');
         }catch(we){
+          try{ clearInterval(_wvPgIv); }catch(e){}
           if(window._exportCancel || window._exportRunId!==myRun) throw we;  // ยกเลิก → หยุดจริง ไม่บันทึกไฟล์ไม่มี waveform
           console.warn('[wave] dynamic burn failed → fallback static:', we && we.message);
         }

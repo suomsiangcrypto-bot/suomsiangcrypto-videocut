@@ -68,10 +68,16 @@ contextBridge.exposeInMainWorld('ffNative', {
     return new Promise(function(resolve, reject){
       if(!ffmpegPath){ reject(new Error('ไม่พบไบนารี ffmpeg (ffmpeg-static)')); return; }
       if(global.__ffCancelled){ reject(new Error('ยกเลิกการส่งออกแล้ว')); return; }
+      global.__ffLastProgress = 0;
       const p = spawn(ffmpegPath, args, { cwd: tmpDir });
       global.__ffChild = p;
       let err = '';
-      p.stderr.on('data', function(d){ err += d.toString(); if(err.length > 24000) err = err.slice(-24000); });
+      p.stderr.on('data', function(d){
+        const s = d.toString();
+        err += s; if(err.length > 24000) err = err.slice(-24000);
+        const m = s.match(/time=(\d+):(\d+):(\d+\.?\d*)/);
+        if(m){ global.__ffLastProgress = (+m[1])*3600 + (+m[2])*60 + (+m[3]); }
+      });
       p.on('error', function(e){ global.__ffChild = null; reject(e); });
       p.on('close', function(code){
         global.__ffChild = null;
@@ -88,6 +94,7 @@ contextBridge.exposeInMainWorld('ffNative', {
     return true;
   },
   resetCancel: function(){ global.__ffCancelled = false; return true; },
+  getProgress: function(){ return global.__ffLastProgress || 0; },
 
   // เปิดโฟลเดอร์ที่มีไฟล์ (ไฮไลต์ไฟล์) / เปิดไฟล์ด้วยโปรแกรมเริ่มต้น
   showInFolder: function(p){ try{ shell.showItemInFolder(p); return true; }catch(e){ return false; } },
