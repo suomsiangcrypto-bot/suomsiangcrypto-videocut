@@ -3648,7 +3648,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
         }
         var outF='mixwave_out.mp4';
         var _capDur = (_expTotal && _expTotal>0.2) ? _expTotal : calcTotalDur();
-        var mwArgs=mixIn.concat(['-filter_complex', parts.join(';'), '-map',vMap,'-map',aMap], vCodec, ['-c:a','aac','-ar','44100','-ac','2','-b:a','192k','-t',_capDur.toFixed(3),'-fflags','+shortest','-max_interleave_delta','0', outF]);
+        var mwArgs=mixIn.concat(['-filter_complex', parts.join(';'), '-map',vMap,'-map',aMap], vCodec, ['-c:a','aac','-ar','44100','-ac','2','-b:a','192k','-t',_capDur.toFixed(3),'-shortest', outF]);
         console.log('[mixwave] filter:', parts.join(';'));
         await ffExec(mwArgs);
         try{ clearInterval(_cwPg); }catch(e){}
