@@ -3275,7 +3275,8 @@ document.getElementById('exp-go').addEventListener('click', async function(){
   var btn=this; btn.disabled=true; btn.textContent='⏳ กำลังโหลด FFmpeg...';
   var ok=await loadFFmpeg();
   if(!ok){ btn.disabled=false; btn.textContent='🚀 เริ่มรวมและส่งออก'; return; }
-  if(window.IS_NATIVE){ try{ await _detectHwEnc(); }catch(e){ window._hwEnc=null; } }
+  // GPU (nvenc) ค้างตอน encode จริงบนบางเครื่อง → ปิดไว้ก่อน ใช้ CPU หลายคอร์ (เร็วพอ + ชัวร์)
+  window._hwEnc = null;
 
   var epw=document.getElementById('ep-wrap'); epw.style.display='block';
   var epf=document.getElementById('ep-fill'); epf.style.width='0';
@@ -4019,7 +4020,7 @@ async function ffExec(args){
   console.log('[ffExec] running:', args.join(' '));
   var timeoutId;
   var timeoutP = new Promise(function(_,rej){
-    timeoutId = setTimeout(function(){ rej(new Error('FFmpeg timeout (30 นาที) — วิดีโอใหญ่มาก ลองลดเป็น 480p')); }, 1800000);
+    timeoutId = setTimeout(function(){ rej(new Error('FFmpeg timeout (8 นาที) — ลองลดเป็น 480p')); }, 480000);
   });
   try{
     await Promise.race([ _ffmpegLib.run.apply(_ffmpegLib, args), timeoutP ]);
