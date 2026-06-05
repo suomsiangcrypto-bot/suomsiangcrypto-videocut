@@ -5,10 +5,7 @@
 //   * โหลดไฟล์นี้ "หลัง" editor.js เสมอ (override loadFFmpeg)
 // ═══════════════════════════════════════════════════════
 (function(){
-  if(!window.ffNative){
-    console.warn('[native] ไม่พบสะพานเนทีฟ (window.ffNative) — รันแบบเบราว์เซอร์ปกติ');
-    return;
-  }
+  function _bootNative(){
   window.IS_NATIVE = true;
 
   // ── self-test: ยืนยันว่า ffmpeg เนทีฟใช้งานได้จริงตอนเปิดแอป ──
@@ -81,36 +78,23 @@
 
       var t = document.querySelector('.logo-txt');
       if(t && t.textContent.indexOf('⚡') < 0) t.textContent = t.textContent + ' ⚡';
-
-      // เพิ่มปุ่มเขียว "⚡ Native Export" เป็นปุ่มส่งออกเดียว (ซ่อนปุ่มเหลืองเดิม)
-      var go = document.getElementById('exp-go');
-      if(go && !document.getElementById('exp-native')){
-        go.style.display = 'none';   // ซ่อนปุ่มเหลือง — ใช้ปุ่มเขียวพอ
-        var nb = document.createElement('button');
-        nb.id = 'exp-native';
-        nb.className = 'em-btn';
-        nb.textContent = '⚡ Native Export';
-        nb.style.cssText = 'background:#22c55e;color:#04210f;border:none;font-weight:800;padding:9px 22px;border-radius:7px;cursor:pointer;font-size:14px;';
-        nb.title = 'รวมและส่งออกด้วย FFmpeg เนทีฟ แล้วบันทึกลงโฟลเดอร์ Videos อัตโนมัติ';
-        nb.addEventListener('click', function(){
-          if(go.disabled || window._exporting){ return; }   // กันกดซ้ำระหว่างส่งออก
-          nb.disabled = true; nb.textContent = '⚡ กำลังส่งออก...';
-          go.click();   // ใช้ขั้นตอนส่งออกเดิม → finalize บันทึกแบบเนทีฟ
-          // รอจนส่งออกเสร็จ (go ถูก enable กลับ) แล้วแสดงสถานะเสร็จ — เว้น 4 วิ กันกดซ้ำรัว ๆ
-          var iv = setInterval(function(){
-            if(!go.disabled && !window._exporting){
-              clearInterval(iv);
-              nb.textContent = '✅ บันทึกแล้ว (ดูที่โฟลเดอร์ Videos)';
-              setTimeout(function(){ nb.disabled = false; nb.textContent = '⚡ Native Export'; }, 4000);
-            }
-          }, 500);
-        });
-        go.parentNode.appendChild(nb);
-      }
+      // ปุ่มส่งออกเป็นปุ่มเขียวถาวรในตัว HTML แล้ว (exp-go) — ไม่ต้องสร้าง/สลับปุ่มอีก
     }catch(e){}
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', brand);
   else brand();
 
   console.log('[native] ⚡ Native FFmpeg bridge ทำงาน — tmp:', window.ffNative.tmpDir);
+  } // end _bootNative
+
+  // ── ลองตรวจ ffNative ซ้ำจนเจอ (กันกรณี preload มาช้า → ปุ่มไม่เขียว/ส่งออกพัง) ──
+  if(window.ffNative){ _bootNative(); }
+  else {
+    console.warn('[native] ffNative ยังไม่มา — รอแล้วลองใหม่ (สูงสุด ~5 วิ)...');
+    var _bt=0, _biv=setInterval(function(){
+      _bt++;
+      if(window.ffNative){ clearInterval(_biv); _bootNative(); }
+      else if(_bt>=33){ clearInterval(_biv); console.warn('[native] หมดเวลา — ไม่พบ ffNative (รันแบบเบราว์เซอร์)'); }
+    }, 150);
+  }
 })();

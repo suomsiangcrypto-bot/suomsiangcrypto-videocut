@@ -3591,9 +3591,12 @@ document.getElementById('exp-go').addEventListener('click', async function(){
       try{
         eps.textContent = _needWave ? '🎵〰️ ผสมเพลง + สร้างเส้นเสียง...' : '🎵 Mix เสียงเพลง...'; epf.style.width='84%';
         window.__opTotalDur = _expTotal;
+        window._wavePhaseLabel = _needWave ? '🎵〰️ เพลง+เส้นเสียง... ' : '🎵 Mix เพลง... ';
+        window._wavePhaseBase = 82; window._wavePhaseSpan = 16;
         _cwPg = setInterval(function(){
           try{ var t=(window.ffNative&&window.ffNative.getProgress)?window.ffNative.getProgress():0;
-            if(_expTotal>0 && t>0){ epf.style.width=Math.min(98, 82+Math.round(t/_expTotal*16))+'%'; eps.textContent=(_needWave?'🎵〰️ เพลง+เส้นเสียง... ':'🎵 Mix เพลง... ')+t.toFixed(0)+'/'+_expTotal.toFixed(0)+' วิ'; }
+            if(_expTotal>0 && t>0){ var pct=Math.min(99,(window._wavePhaseBase||82)+Math.round(t/_expTotal*(window._wavePhaseSpan||16)));
+              epf.style.width=pct+'%'; eps.textContent=(window._wavePhaseLabel||'🎵 Mix... ')+t.toFixed(0)+'/'+_expTotal.toFixed(0)+' วิ'; }
           }catch(e){}
         }, 400);
         _ffmpegLib.FS('writeFile','vid_premix.mp4', new Uint8Array(finalBuf));
@@ -3619,38 +3622,26 @@ document.getElementById('exp-go').addEventListener('click', async function(){
         // เสียงรวม → [aud] (ความยาว = วิดีโอ; เพลงตัดให้พอดีอยู่แล้ว)
         if(nMix>1){ parts.push((fcM.length?fcM.join(';')+';':'')+amixLabels.join('')+'amix=inputs='+nMix+':duration=first:dropout_transition=0[mxa];[mxa]volume='+nMix+'[aud]'); }
         else { parts.push('[0:a]anull[aud]'); }
-        var vMap, aMap, vCodec;
-        if(_needWave){
-          parts.push('[aud]asplit=2[awave][afin]');
-          var Nw=_wvClips.length, waveLabels=[];
-          if(Nw===1){ waveLabels=['awave']; }
-          else { var so=''; for(var s0=0;s0<Nw;s0++){ so+='[aw'+s0+']'; waveLabels.push('aw'+s0); } parts.push('[awave]asplit='+Nw+so); }
-          var vCur='0:v';
-          _wvClips.forEach(function(clip,k){
-            var style=WAVE_STYLES.find(function(s){return s.id===clip.styleId;})||WAVE_STYLES[0];
-            var col='0x'+String(style.color||'#f5c518').replace('#','').slice(0,6);
-            var px=clip.pvX!==undefined?clip.pvX:5, py=clip.pvY!==undefined?clip.pvY:75;
-            var pw=clip.pvW!==undefined?clip.pvW:90, ph=clip.pvH!==undefined?clip.pvH:15;
-            var x=Math.max(0,Math.round(px/100*tw)), y=Math.max(0,Math.round(py/100*th));
-            var w=Math.round(pw/100*tw), h=Math.round(ph/100*th);
-            if(w<8)w=8; if(h<8)h=8; if(w%2)w--; if(h%2)h--;
-            var sens=clip.sensitivity!==undefined?Math.max(0.3,Math.min(3,clip.sensitivity)):1.0;
-            var viz=_opVizFor(style,w,h,col);
-            parts.push('['+waveLabels[k]+']volume='+sens.toFixed(2)+','+viz+',format=rgba,colorkey=0x000000:0.12:0.07,fps=20[wv'+k+']');
-            var nextV=(k===Nw-1)?'vout':('vt'+k);
-            var ovl='['+vCur+'][wv'+k+']overlay=x='+x+':y='+y;
-            if(Nw>1){ var st=Math.max(0,clip.startSec||0).toFixed(2); var en=((clip.startSec||0)+(clip.dur||5)).toFixed(2); ovl+=":enable='between(t\\,"+st+"\\,"+en+")'"; }
-            ovl+='['+nextV+']'; parts.push(ovl); vCur=nextV;
-          });
-          vMap='[vout]'; aMap='[afin]'; vCodec=_vcodec(crf);
-        } else {
-          vMap='0:v'; aMap='[aud]'; vCodec=['-c:v','copy'];
-        }
         var outF='mixwave_out.mp4';
         var _capDur = (_expTotal && _expTotal>0.2) ? _expTotal : calcTotalDur();
-        var mwArgs=mixIn.concat(['-filter_complex', parts.join(';'), '-map',vMap,'-map',aMap], vCodec, ['-c:a','aac','-ar','44100','-ac','2','-b:a','192k','-t',_capDur.toFixed(3),'-shortest', outF]);
-        console.log('[mixwave] filter:', parts.join(';'));
-        await ffExec(mwArgs);
+        var audGraph = parts[0];   // กราฟผสมเสียง → [aud]
+        if(_needWave){
+          // ── 2-PASS: เลี่ยง asplit ที่ทำ ffmpeg บน Windows ค้าง (deadlock) ──
+          // Pass 1: ผสมเสียงเป็นไฟล์เดียวก่อน (เร็วมาก)
+          window._wavePhaseLabel='🎵 ขั้น 1/2 ผสมเพลง... '; window._wavePhaseBase=82; window._wavePhaseSpan=5;
+          console.log('[mixwave] ขั้น 1/2: ผสมเพลง...');
+          await ffExec(mixIn.concat(['-filter_complex', audGraph, '-map','[aud]','-c:a','aac','-ar','44100','-ac','2','-b:a','192k','-t',_capDur.toFixed(3),'mixed_aud.m4a']));
+          console.log('[mixwave] ขั้น 1/2 เสร็จ → เริ่มขั้น 2/2 วาดเส้นเสียง');
+          window._wavePhaseLabel='〰️ ขั้น 2/2 วาดเส้นเสียงลงวิดีโอ... '; window._wavePhaseBase=87; window._wavePhaseSpan=12;
+          // Pass 2: วาดเส้นด้วย canvas (เหมือนพรีวิวเป๊ะ) → แปะลงวิดีโอ — ไม่ใช้ showfreqs จึงไม่ค้าง
+          await _renderWaveFramesOverlay('vid_premix.mp4','mixed_aud.m4a',_capDur,tw,th,crf,eps,epf);
+          console.log('[mixwave] ขั้น 2/2 เสร็จ — วาดเส้นเสียง (canvas เหมือนพรีวิว) ลงวิดีโอแล้ว ✅');
+        } else {
+          // ไม่มีเส้นเสียง: copy วิดีโอ + mix เสียง (เร็ว ทำงานได้อยู่แล้ว)
+          var mwArgs=mixIn.concat(['-filter_complex', audGraph, '-map','0:v','-map','[aud]','-c:v','copy','-c:a','aac','-ar','44100','-ac','2','-b:a','192k','-t',_capDur.toFixed(3),'-shortest', outF]);
+          console.log('[mixwave] filter:', audGraph);
+          await ffExec(mwArgs);
+        }
         try{ clearInterval(_cwPg); }catch(e){}
         var rr=_ffmpegLib.FS('readFile', outF);
         if(rr && rr.length>10000){ finalBuf=rr.buffer; if(_needWave) _waveDone=true; console.log('[mixwave] OK '+(nMix-1)+' เพลง, wave='+_needWave+', size:', rr.length); }
@@ -3783,6 +3774,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
           });
 
           var fc = fcParts.join(';');
+          var _capDur2 = (_expTotal && _expTotal>0.2) ? _expTotal : calcTotalDur();
           console.log('[wave] filter_complex:', fc);
           await ffExec([
             '-i','vpw.mp4',
@@ -3791,6 +3783,7 @@ document.getElementById('exp-go').addEventListener('click', async function(){
             '-map','[vout]','-map','1:a?',
             '-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p',
             '-c:a','copy',
+            '-t', _capDur2.toFixed(3), '-shortest',
             'vwaved.mp4'
           ]);
           try{ clearInterval(_wvPgIv); }catch(e){}
@@ -4087,16 +4080,11 @@ function showToast(msg){var t=document.getElementById('toast');t.textContent=msg
 
 // INIT
 drawRuler();
-// ตรวจว่าเปิดจาก file:// แบบเบราว์เซอร์ล้วน (ไม่ใช่ Electron native ที่ export ได้)
-if(window.location.protocol==='file:' && !window.IS_NATIVE && !window.ffNative){
+// ป้ายเตือน file:// — ปิดถาวร (ไม่มีประโยชน์บน Electron native; กันโผล่กวนใจ)
+(function(){
   var lw=document.getElementById('localhost-warn');
-  if(lw){
-    lw.style.display='flex';
-    lw.addEventListener('click',function(){
-      if(typeof chrome === 'undefined' || !chrome.runtime) showFFmpegHelp();
-    });
-  }
-}
+  if(lw){ lw.style.display='none'; lw.remove&&lw.remove(); }
+})();
 // ซ่อน trim markers
 ['tl-trim-in','tl-trim-out','tl-trim-zone'].forEach(function(id){
   var el=document.getElementById(id);
@@ -4137,6 +4125,7 @@ var WAVE_STYLES = [
   { id:'spikes', name:'Spikes', ico:'📶', color:'#ffeb3b', bg:'transparent', desc:'แท่งเข็มกลาง' },
   { id:'rainbow',name:'Rainbow',ico:'🌈', color:'#ff5252', bg:'transparent', desc:'แท่งไล่สีรุ้ง' },
   { id:'rounded',name:'Rounded',ico:'💊', color:'#ff80ab', bg:'transparent', desc:'แท่งหัวมน' },
+  { id:'heartbeat',name:'Heartbeat',ico:'❤️', color:'#ff1744', bg:'transparent', desc:'คลื่นหัวใจ/ชีพจร' },
 ];
 if(!window.S_WAVES) window.S_WAVES = [];
 
@@ -4299,6 +4288,115 @@ function genWaveData(n, seed){
   return d;
 }
 
+// ── FFT (radix-2) วิเคราะห์ความถี่แบบออฟไลน์ สำหรับเรนเดอร์เส้นเสียงตอนส่งออก ──
+function _fftRadix2(re, im){
+  var n=re.length, j=0, i, m;
+  for(i=0;i<n-1;i++){
+    if(i<j){ var tr=re[i];re[i]=re[j];re[j]=tr; var ti=im[i];im[i]=im[j];im[j]=ti; }
+    m=n>>1; while(m>=1 && j>=m){ j-=m; m>>=1; } j+=m;
+  }
+  for(var len=2;len<=n;len<<=1){
+    var ang=-2*Math.PI/len, wr=Math.cos(ang), wi=Math.sin(ang);
+    for(var st0=0;st0<n;st0+=len){
+      var cr=1, ci=0, half=len>>1;
+      for(var k=0;k<half;k++){
+        var ur=re[st0+k], ui=im[st0+k];
+        var vr=re[st0+k+half]*cr - im[st0+k+half]*ci;
+        var vi=re[st0+k+half]*ci + im[st0+k+half]*cr;
+        re[st0+k]=ur+vr; im[st0+k]=ui+vi;
+        re[st0+k+half]=ur-vr; im[st0+k+half]=ui-vi;
+        var ncr=cr*wr - ci*wi; ci=cr*wi + ci*wr; cr=ncr;
+      }
+    }
+  }
+}
+// frequency bars (0-1) ที่เวลา t — เลียนแบบ getWaveFreqBars ของพรีวิว
+function _offlineFreqBars(pcm, sr, tSec, nBars, sens, shape){
+  var FFT=1024, center=Math.floor(tSec*sr), start=center-(FFT>>1);
+  var re=new Float32Array(FFT), im=new Float32Array(FFT), i;
+  for(i=0;i<FFT;i++){
+    var idx=start+i, samp=(idx>=0&&idx<pcm.length)?pcm[idx]:0;
+    var w=0.5-0.5*Math.cos(2*Math.PI*i/(FFT-1));
+    re[i]=samp*w; im[i]=0;
+  }
+  _fftRadix2(re,im);
+  var bins=FFT>>1, mag=new Float32Array(bins), b;
+  for(b=0;b<bins;b++) mag[b]=Math.sqrt(re[b]*re[b]+im[b]*im[b]);
+  var useBins=Math.floor(bins*0.7), step=useBins/nBars, out=[], k;
+  for(k=0;k<nBars;k++){
+    var sum=0,cnt=0,j2;
+    for(j2=Math.floor(k*step);j2<Math.floor((k+1)*step)&&j2<useBins;j2++){ sum+=mag[j2]; cnt++; }
+    var raw=cnt>0?(sum/cnt):0;
+    raw=Math.min(1, Math.sqrt(raw)*2.2)*(sens||1);
+    var pos=k/Math.max(1,nBars-1), env;
+    if(shape==='flat') env=1;
+    else if(shape==='rise') env=0.3+pos*0.7;
+    else if(shape==='fall') env=1-pos*0.7;
+    else if(shape==='mountain') env=0.3+Math.sin(pos*Math.PI)*0.7;
+    else if(shape==='valley') env=0.3+(1-Math.sin(pos*Math.PI))*0.7;
+    else env=Math.pow(1-pos*0.55,0.7)+0.15;
+    out.push(Math.min(1,Math.max(0.02, raw*env)));
+  }
+  return out;
+}
+// วาดเส้นเสียงเป็นรูปทีละเฟรม (เหมือนพรีวิว) แล้วแปะลงวิดีโอด้วย overlay → ffmpeg ปิดได้ ไม่ค้าง
+async function _renderWaveFramesOverlay(vidName, audName, capDur, tw, th, crf, eps, epf){
+  console.log('[wave-canvas] เข้าฟังก์ชัน — ถอดเสียงเป็น PCM ด้วย ffmpeg...');
+  // ถอดเสียงเป็น PCM ดิบด้วย ffmpeg (เชื่อถือได้กว่า decodeAudioData ของเบราว์เซอร์ที่อาจถอด m4a ไม่ได้)
+  var sr=22050;
+  await ffExec(['-i', audName, '-ac','1','-ar', String(sr), '-f','f32le','pcm_wave.raw']);
+  var raw=_ffmpegLib.FS('readFile','pcm_wave.raw');
+  var nSamp=Math.floor(raw.byteLength/4);
+  var pcm=new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + nSamp*4));
+  console.log('[wave-canvas] ถอดเสียงสำเร็จ —', nSamp, 'samples @', sr, 'Hz');
+  try{ ffDel('pcm_wave.raw'); }catch(e){}
+  var FPS=24, nFrames=Math.max(1, Math.ceil(capDur*FPS));
+  var meta=(window.S_WAVES||[]).map(function(clip){
+    var style=WAVE_STYLES.find(function(s){return s.id===clip.styleId;})||WAVE_STYLES[0];
+    var pw=clip.pvW!==undefined?clip.pvW:90, ph=clip.pvH!==undefined?clip.pvH:15;
+    var px=clip.pvX!==undefined?clip.pvX:5, py=clip.pvY!==undefined?clip.pvY:75;
+    var w=Math.max(8,Math.round(pw/100*tw)), h=Math.max(8,Math.round(ph/100*th));
+    if(w%2)w--; if(h%2)h--;
+    var x=Math.max(0,Math.round(px/100*tw)), y=Math.max(0,Math.round(py/100*th));
+    var n=Math.max(10, Math.floor(w/18));
+    var cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+    return { style:style, x:x, y:y, n:n, base:genWaveData(n, clip.seed||1),
+             sens:(clip.sensitivity!==undefined?clip.sensitivity:1.0),
+             shape:(clip.shapeMode||'natural'), cv:cv };
+  });
+  console.log('[wave-canvas] เริ่มวาด '+meta.length+' เส้น | สไตล์:', meta.map(function(m){return m.style.id;}).join(','), '| เฟรม/เส้น:', nFrames);
+  for(var ci=0; ci<meta.length; ci++){
+    var cm=meta[ci];
+    for(var fr=0; fr<nFrames; fr++){
+      var t=fr/FPS;
+      var bars=_offlineFreqBars(pcm, sr, t + 0.06, cm.base.length, cm.sens, cm.shape);
+      drawWaveAnimated(cm.cv, cm.style, cm.base, t, bars);
+      var durl=cm.cv.toDataURL('image/png'), b64=durl.slice(durl.indexOf(',')+1);
+      var binr=atob(b64), u8=new Uint8Array(binr.length);
+      for(var bi=0; bi<binr.length; bi++) u8[bi]=binr.charCodeAt(bi);
+      _ffmpegLib.FS('writeFile', 'wv'+ci+'_'+String(fr).padStart(5,'0')+'.png', u8);
+      if(epf && fr%15===0){ epf.style.width=Math.min(94, 86+Math.round((ci*nFrames+fr)/(meta.length*nFrames)*8))+'%'; }
+      if(eps && fr%30===0) eps.textContent='〰️ วาดเส้นเสียง (เหมือนพรีวิว) '+(ci*nFrames+fr)+'/'+(meta.length*nFrames)+'...';
+      if(fr%40===0) await new Promise(function(r){setTimeout(r,0);});
+    }
+  }
+  var inp=['-i', vidName];
+  meta.forEach(function(cm,idx){ inp.push('-framerate', String(FPS), '-i', 'wv'+idx+'_%05d.png'); });
+  inp.push('-i', audName);
+  var audIdx=meta.length+1, fc=[], vCur='0:v';
+  meta.forEach(function(cm,k){
+    var nextV=(k===meta.length-1)?'vout':('ov'+k);
+    fc.push('['+vCur+']['+(k+1)+':v]overlay=x='+cm.x+':y='+cm.y+':eof_action=pass['+nextV+']');
+    vCur=nextV;
+  });
+  if(eps) eps.textContent='〰️ แปะเส้นเสียงลงวิดีโอ...'; if(epf) epf.style.width='95%';
+  await ffExec(inp.concat(['-filter_complex', fc.join(';'), '-map','[vout]','-map',audIdx+':a',
+    '-c:v','libx264','-crf',String(crf),'-preset','ultrafast','-pix_fmt','yuv420p',
+    '-c:a','aac','-ar','44100','-ac','2','-b:a','192k','-t',capDur.toFixed(3),'-shortest','mixwave_out.mp4']));
+  for(var c2=0;c2<meta.length;c2++) for(var f2=0;f2<nFrames;f2++){ try{ffDel('wv'+c2+'_'+String(f2).padStart(5,'0')+'.png');}catch(e){} }
+  try{ ffDel(audName); }catch(e){}
+}
+
 // วาด waveform ที่เคลื่อนไหวตาม audioTime หรือ real frequency bars
 function drawWaveAnimated(canvas, style, baseData, audioTime, realBars){
   var W=canvas.width, H=canvas.height, n=baseData.length;
@@ -4451,6 +4549,27 @@ function drawWaveAnimated(canvas, style, baseData, audioTime, realBars){
       else { ctx.rect(x,H-h,bwC,h); }
       ctx.fill();
     }
+  } else if(style.id==='heartbeat'){
+    // คลื่นหัวใจ/ชีพจร (ECG) — เส้นวิ่งแนวนอน เด้งยอด QRS ตามจังหวะเสียง
+    var mid=H*0.5;
+    ctx.strokeStyle=c; ctx.lineWidth=Math.max(2, H*0.045); ctx.lineJoin='round'; ctx.lineCap='round';
+    ctx.shadowBlur=8; ctx.shadowColor=c;
+    ctx.beginPath(); ctx.moveTo(0, mid);
+    for(var i=0;i<n;i++){
+      var seg=W/n, x=i*seg, v=data[i];
+      if(v>0.32){
+        ctx.lineTo(x+seg*0.15, mid);
+        ctx.lineTo(x+seg*0.30, mid + v*H*0.14);   // Q
+        ctx.lineTo(x+seg*0.45, mid - v*H*0.46);    // R (ยอดสูง)
+        ctx.lineTo(x+seg*0.60, mid + v*H*0.20);    // S
+        ctx.lineTo(x+seg*0.80, mid);               // กลับเส้นฐาน
+      } else {
+        ctx.lineTo(x+seg*0.5, mid - v*H*0.06);
+      }
+    }
+    ctx.lineTo(W, mid);
+    ctx.stroke();
+    ctx.shadowBlur=0;
   }
 }
 
