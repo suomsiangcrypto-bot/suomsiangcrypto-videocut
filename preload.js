@@ -72,17 +72,37 @@ contextBridge.exposeInMainWorld('ffNative', {
       const p = spawn(ffmpegPath, args, { cwd: tmpDir });
       global.__ffChild = p;
       let err = '';
+      let done = false, sentQ = false;
+      try{ if(p.stdout) p.stdout.on('data', function(){}); }catch(e){}
+      // ── watchdog: ถ้า progress ไม่ขยับ = เข้ารหัสครบแล้วแต่ ffmpeg ไม่ยอมปิด (พบบน Windows)
+      //    → ส่ง 'q' ให้ปิดไฟล์อย่างนุ่มนวล (เขียน moov ครบ ไฟล์ใช้ได้) ; ถ้ายังไม่ปิดค่อยฆ่า
+      let lastP = -1, stall = 0;
+      const wd = setInterval(function(){
+        if(done){ clearInterval(wd); return; }
+        var cur = global.__ffLastProgress || 0;
+        if(cur === lastP){ stall += 3; } else { lastP = cur; stall = 0; }
+        if(stall >= 15 && !sentQ && cur > 0){
+          sentQ = true;
+          try{ if(p.stdin && p.stdin.writable) p.stdin.write('q\n'); }catch(e){}
+        }
+        if(stall >= 40){
+          clearInterval(wd);
+          try{ p.kill('SIGKILL'); }catch(e){}
+        }
+      }, 3000);
       p.stderr.on('data', function(d){
         const s = d.toString();
         err += s; if(err.length > 24000) err = err.slice(-24000);
         const m = s.match(/time=(\d+):(\d+):(\d+\.?\d*)/);
         if(m){ global.__ffLastProgress = (+m[1])*3600 + (+m[2])*60 + (+m[3]); }
       });
-      p.on('error', function(e){ global.__ffChild = null; reject(e); });
+      p.on('error', function(e){ if(done) return; done=true; clearInterval(wd); global.__ffChild = null; reject(e); });
       p.on('close', function(code){
-        global.__ffChild = null;
+        if(done) return; done = true;
+        clearInterval(wd); global.__ffChild = null;
         if(global.__ffCancelled){ reject(new Error('ยกเลิกการส่งออกแล้ว')); return; }
-        if(code === 0) resolve({ code: 0 });
+        // ถ้าเราสั่ง q ให้ปิด (เพราะค้างตอนจบ) → ถือว่าไฟล์ใช้ได้ ให้ฝั่ง editor เช็คขนาดเอง
+        if(code === 0 || sentQ) resolve({ code: 0, forced: sentQ });
         else reject(new Error('ffmpeg exited with code ' + code + '\n' + err.slice(-700)));
       });
     });
