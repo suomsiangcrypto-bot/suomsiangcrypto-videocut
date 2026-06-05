@@ -1,0 +1,51 @@
+name: Build Windows EXE
+
+# รันเมื่อ push ขึ้น main/master, เมื่อสร้าง tag ขึ้นต้นด้วย v (เช่น v1.0.0),
+# หรือกดรันเองจากแท็บ Actions (Run workflow)
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # ให้สิทธิ์แนบไฟล์เข้า Release ได้
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Windows installer (.exe)
+        run: npm run dist:win
+        env:
+          # ไม่เซ็นโค้ด (ไม่มีใบรับรอง) — สร้าง installer แบบ unsigned ได้ปกติ
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload .exe as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SUOMSIANG-VIDEOCUT-Windows-exe
+          path: |
+            dist/*.exe
+            dist/*.exe.blockmap
+          if-no-files-found: error
+
+      - name: Attach .exe to GitHub Release (เฉพาะตอน push tag v*)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
